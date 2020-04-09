@@ -824,6 +824,70 @@ def reset_ids(network):
     nodes.reset_index(drop=True,inplace=True)
     return Network(edges=edges,nodes=nodes)
 
+def _intersects_pyg(geom, gdf, sindex,tolerance=1e-9):
+    buf = pygeos.buffer(geom,tolerance)
+    if pygeos.is_empty(buf):
+        # can have an empty buffer with too small a tolerance, fallback to original geom
+        buf = geom
+    try:
+        return _intersects_gdf_pyg(buf, gdf,sindex)
+    except shapely.errors.TopologicalError:  #this still needs to be changed
+        # can exceptionally buffer to an invalid geometry, so try re-buffering
+        buf = pygeos.buffer(geom,0)
+        return _intersects_gdf_pyg(buf, gdf,sindex)
+    
+def _intersects_gdf_pyg(geom, gdf,sindex):
+    return gdf[sindex.query(geom,'intersects')]
+
+def intersects_pyg(geom, gdf, sindex, tolerance=1e-9):
+    """Find the subset of a GeoDataFrame intersecting with a shapely geometry
+    """
+    return _intersects_pyg(geom, gdf, sindex, tolerance)
+
+def nodes_intersecting_pyg(line,nodes,sindex,tolerance=1e-9):
+    """Find nodes intersecting line
+    """
+    return intersects_pyg(line, nodes,sindex, tolerance)
+
+def split_edges_at_nodes_pyg(network, tolerance=1e-9):
+    """Split network edges where they intersect node geometries
+    """
+    
+    ## you may want to remove the lines below if the network is already in pygeos
+    network.edges['geometry'] = pygeos.from_shapely(network.edges['geometry'])
+    network.nodes['geometry'] = pygeos.from_shapely(network.nodes['geometry'])
+
+    #already initiate the spatial index, so we dont have to do that every time
+    sindex = pygeos.STRtree(network.nodes['geometry'])
+    
+    grab_all_edges = []
+    for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
+        hits = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex, tolerance=1e-9)
+                
+        if len(hits) < 3:
+            grab_all_edges.append([[edge.osm_id],[edge.geometry],[edge.highway]])
+            continue
+
+        # get points and geometry as list of coordinates
+        split_points = pygeos.coordinates.get_coordinates(pygeos.snap(hits,edge.geometry,tolerance=1e-9))
+        coor_geom = pygeos.coordinates.get_coordinates(edge.geometry)
+
+        # potentially split to multiple edges
+        split_locs = np.argwhere(np.isin(coor_geom, split_points).all(axis=1))[:,0]
+        split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
+
+        new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
+
+        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge.highway]*len(new_edges)])
+
+    # combine all new edges
+    edges = pandas.DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
+                         columns=['osm_id','geometry','infra_type'])
+    # return new network with split edges
+    return Network(
+        nodes=network.nodes,
+        edges=edges
+    )
 
 #returns a geopandas dataframe of a simplified network
 def simplify_network_from_gdf(gdf):
