@@ -15,6 +15,7 @@ from geopandas import GeoDataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
 from tqdm import tqdm
+#from pgpkg import Geopackage
 # optional progress bars
 #if 'SNKIT_PROGRESS' in os.environ and os.environ['SNKIT_PROGRESS'] in ('1', 'TRUE'):
 #    try:
@@ -120,20 +121,32 @@ def add_topology(network, id_col='id'):
     from_ids = []
     to_ids = []
     node_ends = []
+    bugs = []
     sindex = pygeos.STRtree(network.nodes.geometry)
     for edge in tqdm(network.edges.itertuples(), desc="topology", total=len(network.edges)):
         start, end = line_endpoints(edge.geometry)
 
-        start_node = nearest_node(start, network.nodes,sindex)
-        from_ids.append(start_node[id_col])
-
-        end_node = nearest_node(end, network.nodes,sindex)
-        to_ids.append(end_node[id_col])
-
+        try: 
+            start_node = nearest_node(start, network.nodes,sindex)
+            from_ids.append(start_node[id_col])
+        except:
+            bugs.append(edge.id)
+            from_ids.append("")
+        try:
+            end_node = nearest_node(end, network.nodes,sindex)
+            to_ids.append(end_node[id_col])
+        except:
+            bugs.append(edge.id)
+            to_ids.append("")
+    print(bugs)
+    
     edges = network.edges.copy()
+    #with Geopackage('addtopologyBread.gpkg', 'w') as out:
+        #out.add_layer(edges.loc[edges.id.isin(list(bugs))], name='Tast', crs='EPSG:4326')
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
     edges['to_id'] = to_ids
+    edges = edges.loc[~(edges.id.isin(list(bugs)))].reset_index(drop=True)
 
     return Network(
         nodes=network.nodes,
@@ -362,9 +375,56 @@ def link_nodes_to_nearest_edge(network, condition=None):
 #Methods to clean roundabouts and junctions should be done before
 #splitting edges at nodes to avoid logic conflicts
 def find_roundabouts(network):
-    roundabout_ind = np.where(network.edges['from_id']==network.edges['to_id'])
-    return network.edges.iloc[roundabout_ind]
+    #roundabout_ind = np.where(network.edges['from_id']==network.edges['to_id'])
+    roundabouts = []
+    for edge in network.edges.itertuples():
+        if pygeos.predicates.is_ring(edge.geometry): roundabouts.append(edge)
+    return roundabouts
 
+
+def clean_roundabouts(network):
+    roundabouts = find_roundabouts(network)
+    sindex = pygeos.STRtree(network.edges['geometry'])
+    sindexNodes = pygeos.STRtree(network.nodes['geometry'])
+
+    new_geom = network.edges
+    new_edge = []
+    remove_edge=[]
+    remove_nodes = []
+
+    for roundabout in roundabouts:
+        round_bound = pygeos.constructive.boundary(roundabout.geometry)
+        round_centroid = pygeos.constructive.centroid(roundabout.geometry)
+
+        edges_intersect = _intersects_pyg(roundabout.geometry, network.edges['geometry'], sindex)
+        for e in edges_intersect:
+            ef = network.edges.loc[network.edges.geometry == e]
+            new_edge.append([ef.osm_id.item(), ef.highway.item(), pygeos.constructive.snap(ef.geometry.item(),round_centroid, tolerance=1)])
+            remove_edge.append(ef.osm_id.item())
+
+        
+        #print(pygeos.constructive.centroid(roundabout.geometry))
+        #pygeos.constructive.snap()
+        nodes_intersect = _intersects_pyg(roundabout.geometry, network.nodes['geometry'], sindex)
+        for n in nodes_intersect:
+            nf = network.nodes.loc[network.nodes.geometry == n]
+            #print(nf)
+            remove_nodes.append(nf.geometry.item())
+
+
+    new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
+    new2 = pd.DataFrame(remove_nodes, columns=['geometry'])
+    #print(new)
+    with Geopackage('new.gpkg', 'w') as out:
+        out.add_layer(new, name='Test', crs='EPSG:4326')
+        out.add_layer(new2, name="centre",crs='EPSG:4326')
+
+    ges = new
+    #edges = ed.loc[~ed.osm_id.isin(list(remove_edge))]
+    #print(edges.columns)
+    #ges = pd.concat([edges,new],ignore_index=True, sort=False)
+    #ges.reset_index(inplace=True, drop=True)
+    return Network(edges=ges, nodes=network.nodes)
 #Simply returns a dataframe of nodes with degree 1, technically not all of 
 #these are "hanging"
 def find_hanging_nodes(network):
@@ -915,7 +975,6 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
 def simplify_network_from_gdf(gdf):
     net = Network(edges=gdf)
     net = add_endpoints(net)
-    line_endpoints_pyg(net.edges.iloc[0])
     net = split_edges_at_nodes_pyg(net)
     net = add_ids(net)
     net = add_topology(net)
@@ -923,8 +982,6 @@ def simplify_network_from_gdf(gdf):
     net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net) 
-    print(net.nodes)
-    print(net.edges)
     return net
 
 #Creates an igraph from geodataframe with the distances as weights. 
