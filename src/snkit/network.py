@@ -867,10 +867,7 @@ def nodes_intersecting_pyg(line,nodes,sindex,tolerance=1e-9):
 def split_edges_at_nodes_pyg(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
     """
-    
-    ## you may want to remove the lines below if the network is already in pygeos
-    #network.edges['geometry'] = pygeos.from_shapely(network.edges['geometry'])
-    #network.nodes['geometry'] = pygeos.from_shapely(network.nodes['geometry'])
+
 
     #already initiate the spatial index, so we dont have to do that every time
     sindex = pygeos.STRtree(network.nodes['geometry'])
@@ -880,7 +877,8 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
         hits = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex, tolerance=1e-9)
                 
         if len(hits) < 3:
-            grab_all_edges.append([[edge.osm_id],[edge.geometry],[edge.infra_type]])
+            grab_all_edges.append([[edge.osm_id],[edge.geometry],[edge.highway]])
+
             continue
 
         # get points and geometry as list of coordinates
