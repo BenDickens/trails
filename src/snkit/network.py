@@ -14,15 +14,15 @@ import igraph as ig
 from geopandas import GeoDataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
-
+from tqdm import tqdm
 # optional progress bars
-if 'SNKIT_PROGRESS' in os.environ and os.environ['SNKIT_PROGRESS'] in ('1', 'TRUE'):
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        from snkit.utils import tqdm_standin as tqdm
-else:
-    from snkit.utils import tqdm_standin as tqdm
+#if 'SNKIT_PROGRESS' in os.environ and os.environ['SNKIT_PROGRESS'] in ('1', 'TRUE'):
+#    try:
+#        from tqdm import tqdm
+#    except ImportError:
+#        from snkit.utils import tqdm_standin as tqdm
+#else:
+#    from snkit.utils import tqdm_standin as tqdm
 
 
 class Network():
@@ -120,14 +120,14 @@ def add_topology(network, id_col='id'):
     from_ids = []
     to_ids = []
     node_ends = []
-
+    sindex = pygeos.STRtree(network.nodes.geometry)
     for edge in tqdm(network.edges.itertuples(), desc="topology", total=len(network.edges)):
         start, end = line_endpoints(edge.geometry)
 
-        start_node = nearest_node(start, network.nodes)
+        start_node = nearest_node(start, network.nodes,sindex)
         from_ids.append(start_node[id_col])
 
-        end_node = nearest_node(end, network.nodes)
+        end_node = nearest_node(end, network.nodes,sindex)
         to_ids.append(end_node[id_col])
 
     edges = network.edges.copy()
@@ -379,8 +379,6 @@ def add_distances(network):
     #The commented out crs does not work in all cases
     #current_crs = [*network.edges.crs.values()]
     #current_crs = str(current_crs[0])
-    print(network.nodes.iloc[0])
-    print(network.nodes)
     lat = pygeom.get_y(network.nodes['geometry'].iloc[0])
     lon = pygeom.get_x(network.nodes['geometry'].iloc[0])
     # formula below based on :https://gis.stackexchange.com/a/190209/80697 
@@ -464,6 +462,7 @@ def merge_2(network):
     net = network
     nod = net.nodes.copy()
     edg = net.edges.copy()
+    edg_sindex = pygeos.STRtree(network.edges.geometry)
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
     else: deg = nod['degree'].to_numpy()
@@ -477,19 +476,20 @@ def merge_2(network):
     nodGeom = nod['geometry']
     eIDtoRemove =[]
     c = 0
-    while n2:        
+    while n2:   
         newEdge = []
         info_first_edge = []
         nodeID = n2.pop()
         deg[nodeID]= 0
         #Co-ordinates of current node
         node_geometry = nodGeom[nodeID]
-        eID = set(edg.sindex.nearest(nodGeom[nodeID].bounds))
+        eID = set(edg_sindex.query(nodGeom[nodeID],predicate='intersects'))
         #Find the nearest 2 edges, unless there is an error in the dataframe
         #this will return the connected edges using spatial indexing
         if len(eID) > 2: edgePath1, edgePath2 = find_closest_2_edges(eID,nodeID,edg,node_geometry)
         elif len(eID) < 2: 
-            print("First set only contains ", len(eID), "edges") 
+            #print("First set only contains ", len(eID), "edges")#
+            continue
         else: 
             edgePath1 = edg.iloc[eID.pop()]
             edgePath2 = edg.iloc[eID.pop()] 
@@ -505,10 +505,10 @@ def merge_2(network):
         while deg[nextNode1] == 2:
             deg[nextNode1] = 0
             n2.discard(nextNode1)
-            eID = set(edg.sindex.nearest(nodGeom[nextNode1].bounds))
+            eID = set(edg_sindex.query(nodGeom[nextNode1],predicate='intersects'))
             eID.discard(edgePath1.id)
             edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
-            key=lambda match: nodGeom[nextNode1].distance(match.geometry))
+            key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
             nextNode1 = edgePath1.to_id if edgePath1.from_id==nextNode1 else edgePath1.from_id
             newEdge.append(edgePath1.geometry)
             eIDtoRemove.append(edgePath1.id)
@@ -516,32 +516,33 @@ def merge_2(network):
         while deg[nextNode2] == 2:
             deg[nextNode2] = 0
             n2.discard(nextNode2)
-            eID = set(edg.sindex.nearest(nodGeom[nextNode2].bounds))
+            eID = set(edg_sindex.query(nodGeom[nextNode2],predicate='intersects'))
             eID.discard(edgePath2.id)
             edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
-            key=lambda match: nodGeom[nextNode2].distance(match.geometry))
+            key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
             nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
             newEdge.append(edgePath2.geometry)
             eIDtoRemove.append(edgePath2.id)
         #Update the information of the first edge
-        new_merged_geom = linemerge(newEdge)
+        new_merged_geom = pygeos.line_merge(pygeos.multilinestrings([x for x in newEdge]))
         edg.at[info_first_edge,'geometry'] = new_merged_geom
         edg.at[info_first_edge,'from_id'] = nextNode1
         edg.at[info_first_edge,'to_id'] = nextNode2
-
+        
     edg = edg.loc[~(edg.id.isin(eIDtoRemove))].reset_index(drop=True)
     #We remove all degree 0 nodes, including those found in dropHanging
     n = nod.loc[nod.degree > 0].reset_index(drop=True)
 
     return Network(nodes=n,edges=edg)
 
+
 #IReturns the 2 edges connected to the current node
 def find_closest_2_edges(edgeIDs, nodeID, edges, nodGeometry):
     edgePath1 = min([edges.iloc[match_idx] for match_idx in edgeIDs],
-            key=lambda match: nodGeometry.distance(match.geometry))
+            key=lambda match: pygeos.distance(nodGeometry,match.geometry))
     edgeIDs.remove(edgePath1.id)
     edgePath2 = min([edges.iloc[match_idx] for match_idx in edgeIDs],
-            key=lambda match: nodGeometry.distance(match.geometry))
+            key=lambda match:  pygeos.distance(nodGeometry,match.geometry))
     return edgePath1, edgePath2
 
 
@@ -656,20 +657,20 @@ def nearest_point_on_edges(point, edges):
     snap = nearest_point_on_line(point, edge.geometry)
     return snap
 
-def nearest_node(point, nodes):
+def nearest_node(point, nodes,sindex):
     """Find nearest node to a point
     """
-    return nearest(point, nodes)
+    return nearest(point, nodes,sindex)
 
-def nearest_edge(point, edges):
+def nearest_edge(point, edges,sindex):
     """Find nearest edge to a point
     """
-    return nearest(point, edges)
+    return nearest(point, edges,sindex)
 
-def nearest(geom, gdf):
+def nearest(geom, gdf,sindex):
     """Find the element of a GeoDataFrame nearest a shapely geometry
     """
-    sindex = pygeos.STRtree(gdf['geometry'])
+    #sindex = pygeos.STRtree(gdf['geometry'])
     matches_idx = sindex.query(geom)
     #pygeos.measurement.bounds(geom)
     #matches_idx = gdf.sindex.nearest(geom.bounds)
@@ -867,31 +868,39 @@ def nodes_intersecting_pyg(line,nodes,sindex,tolerance=1e-9):
 def split_edges_at_nodes_pyg(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
     """
-
-
-    #already initiate the spatial index, so we dont have to do that every time
-    sindex = pygeos.STRtree(network.nodes['geometry'])
+    sindex_nodes = pygeos.STRtree(network.nodes['geometry'])
+    sindex_edges = pygeos.STRtree(network.edges['geometry'])
     
     grab_all_edges = []
     for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
-        hits = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex, tolerance=1e-9)
-                
-        if len(hits) < 3:
+        hits_nodes = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex_nodes, tolerance=1e-9)
+        hits_edges = nodes_intersecting_pyg(edge.geometry,network.edges['geometry'],sindex_edges, tolerance=1e-9)
+        hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
+        try:
+            hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
+            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in test] for item in sublist],name='geometry')
+            hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
+                pygeos.constructive.extract_unique_points(pygeos.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
+        except TypeError:
+            return hits_edges
+        
+        hits = pd.DataFrame(hits,columns=['geometry'])    
+        
+        if (len(hits_nodes) < 3):
             grab_all_edges.append([[edge.osm_id],[edge.geometry],[edge.highway]])
-
             continue
 
         # get points and geometry as list of coordinates
         split_points = pygeos.coordinates.get_coordinates(pygeos.snap(hits,edge.geometry,tolerance=1e-9))
         coor_geom = pygeos.coordinates.get_coordinates(edge.geometry)
-
+ 
         # potentially split to multiple edges
         split_locs = np.argwhere(np.isin(coor_geom, split_points).all(axis=1))[:,0]
         split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
 
         new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
 
-        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge.infra_type]*len(new_edges)])
+        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge.highway]*len(new_edges)])
 
     # combine all new edges
     edges = pd.DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
