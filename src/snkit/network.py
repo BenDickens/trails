@@ -868,26 +868,32 @@ def nodes_intersecting_pyg(line,nodes,sindex,tolerance=1e-9):
 def split_edges_at_nodes_pyg(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
     """
-    
-    ## you may want to remove the lines below if the network is already in pygeos
-    #network.edges['geometry'] = pygeos.from_shapely(network.edges['geometry'])
-    #network.nodes['geometry'] = pygeos.from_shapely(network.nodes['geometry'])
-
-    #already initiate the spatial index, so we dont have to do that every time
-    sindex = pygeos.STRtree(network.nodes['geometry'])
+    sindex_nodes = pygeos.STRtree(network.nodes['geometry'])
+    sindex_edges = pygeos.STRtree(network.edges['geometry'])
     
     grab_all_edges = []
     for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
-        hits = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex, tolerance=1e-9)
-                
-        if len(hits) < 3:
+        hits_nodes = nodes_intersecting_pyg(edge.geometry,network.nodes['geometry'],sindex_nodes, tolerance=1e-9)
+        hits_edges = nodes_intersecting_pyg(edge.geometry,network.edges['geometry'],sindex_edges, tolerance=1e-9)
+        hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
+        try:
+            hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
+            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in test] for item in sublist],name='geometry')
+            hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
+                pygeos.constructive.extract_unique_points(pygeos.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
+        except TypeError:
+            return hits_edges
+        
+        hits = pd.DataFrame(hits,columns=['geometry'])    
+        
+        if (len(hits_nodes) < 3):
             grab_all_edges.append([[edge.osm_id],[edge.geometry],[edge.highway]])
             continue
 
         # get points and geometry as list of coordinates
         split_points = pygeos.coordinates.get_coordinates(pygeos.snap(hits,edge.geometry,tolerance=1e-9))
         coor_geom = pygeos.coordinates.get_coordinates(edge.geometry)
-
+ 
         # potentially split to multiple edges
         split_locs = np.argwhere(np.isin(coor_geom, split_points).all(axis=1))[:,0]
         split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
