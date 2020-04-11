@@ -15,7 +15,7 @@ from geopandas import GeoDataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
 from tqdm import tqdm
-#from pgpkg import Geopackage
+from pgpkg import Geopackage
 # optional progress bars
 #if 'SNKIT_PROGRESS' in os.environ and os.environ['SNKIT_PROGRESS'] in ('1', 'TRUE'):
 #    try:
@@ -141,8 +141,6 @@ def add_topology(network, id_col='id'):
     print(bugs)
     
     edges = network.edges.copy()
-    #with Geopackage('addtopologyBread.gpkg', 'w') as out:
-        #out.add_layer(edges.loc[edges.id.isin(list(bugs))], name='Tast', crs='EPSG:4326')
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
     edges['to_id'] = to_ids
@@ -385,46 +383,30 @@ def find_roundabouts(network):
 def clean_roundabouts(network):
     roundabouts = find_roundabouts(network)
     sindex = pygeos.STRtree(network.edges['geometry'])
-    sindexNodes = pygeos.STRtree(network.nodes['geometry'])
 
     new_geom = network.edges
     new_edge = []
     remove_edge=[]
-    remove_nodes = []
 
     for roundabout in roundabouts:
         round_bound = pygeos.constructive.boundary(roundabout.geometry)
         round_centroid = pygeos.constructive.centroid(roundabout.geometry)
+        er = network.edges.loc[network.edges.geometry == roundabout.geometry]
+        remove_edge.append(er.index)
 
         edges_intersect = _intersects_pyg(roundabout.geometry, network.edges['geometry'], sindex)
         for e in edges_intersect:
             ef = network.edges.loc[network.edges.geometry == e]
-            new_edge.append([ef.osm_id.item(), ef.highway.item(), pygeos.constructive.snap(ef.geometry.item(),round_centroid, tolerance=1)])
-            remove_edge.append(ef.osm_id.item())
-
-        
-        #print(pygeos.constructive.centroid(roundabout.geometry))
-        #pygeos.constructive.snap()
-        nodes_intersect = _intersects_pyg(roundabout.geometry, network.nodes['geometry'], sindex)
-        for n in nodes_intersect:
-            nf = network.nodes.loc[network.nodes.geometry == n]
-            #print(nf)
-            remove_nodes.append(nf.geometry.item())
-
+            if er.index == ef.index: print("oo")
+            else: new_edge.append([ef.osm_id.item(), ef.highway.item(), pygeos.constructive.snap(ef.geometry.item(),round_centroid, tolerance=1)])
+            remove_edge.append(ef.index)
 
     new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
-    new2 = pd.DataFrame(remove_nodes, columns=['geometry'])
-    #print(new)
-    with Geopackage('new.gpkg', 'w') as out:
-        out.add_layer(new, name='Test', crs='EPSG:4326')
-        out.add_layer(new2, name="centre",crs='EPSG:4326')
-
-    ges = new
-    #edges = ed.loc[~ed.osm_id.isin(list(remove_edge))]
-    #print(edges.columns)
-    #ges = pd.concat([edges,new],ignore_index=True, sort=False)
-    #ges.reset_index(inplace=True, drop=True)
+    remove_edge = np.unique(remove_edge)
+    edges = network.edges.drop(remove_edge)
+    ges = pd.concat([edges,new])
     return Network(edges=ges, nodes=network.nodes)
+
 #Simply returns a dataframe of nodes with degree 1, technically not all of 
 #these are "hanging"
 def find_hanging_nodes(network):
@@ -977,6 +959,7 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
 #returns a geopandas dataframe of a simplified network
 def simplify_network_from_gdf(gdf):
     net = Network(edges=gdf)
+    #net = clean_roundabouts(net)
     net = add_endpoints(net)
     net = split_edges_at_nodes_pyg(net)
     net = add_ids(net)
@@ -985,6 +968,9 @@ def simplify_network_from_gdf(gdf):
     net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net) 
+    #with Geopackage('final.gpkg', 'w') as out:
+     #   out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
+      #  out.add_layer(net.edges, name="edges",crs='EPSG:4326')
     return net
 
 #Creates an igraph from geodataframe with the distances as weights. 
@@ -999,8 +985,3 @@ def subsection(network):
     e = network
     return d_within(e.iloc[221].geometry, e, 0.03)
 
-def clean_roundabouts(network):
-    roundabouts = find_roundabouts(network)
-    print(roundabouts)
-    roundabouts.to_file("/home/r/IES/Transport_Network/network/shp/roundabouts.shp")
-    return network
