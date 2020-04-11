@@ -536,6 +536,7 @@ def merge_2(network):
     nodGeom = nod['geometry']
     eIDtoRemove =[]
     c = 0
+    pbar = tqdm(total=len(n2))
     while n2:   
         newEdge = []
         info_first_edge = []
@@ -588,7 +589,9 @@ def merge_2(network):
         edg.at[info_first_edge,'geometry'] = new_merged_geom
         edg.at[info_first_edge,'from_id'] = nextNode1
         edg.at[info_first_edge,'to_id'] = nextNode2
-        
+        pbar.update(1)
+    
+    pbar.close()
     edg = edg.loc[~(edg.id.isin(eIDtoRemove))].reset_index(drop=True)
     #We remove all degree 0 nodes, including those found in dropHanging
     n = nod.loc[nod.degree > 0].reset_index(drop=True)
@@ -938,7 +941,7 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
         hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
         try:
             hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
-            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in test] for item in sublist],name='geometry')
+            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in hits_edges] for item in sublist],name='geometry')
             hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
                 pygeos.constructive.extract_unique_points(pygeos.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
         except TypeError:
