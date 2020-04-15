@@ -369,11 +369,9 @@ def link_nodes_to_nearest_edge(network, condition=None):
     )
     return split_edges_at_nodes(unsplit)
 
-#OSM also tags roundabouts as junctions
 #Methods to clean roundabouts and junctions should be done before
 #splitting edges at nodes to avoid logic conflicts
 def find_roundabouts(network):
-    #roundabout_ind = np.where(network.edges['from_id']==network.edges['to_id'])
     roundabouts = []
     for edge in network.edges.itertuples():
         if pygeos.predicates.is_ring(edge.geometry): roundabouts.append(edge)
@@ -381,30 +379,78 @@ def find_roundabouts(network):
 
 
 def clean_roundabouts(network):
-    roundabouts = find_roundabouts(network)
     sindex = pygeos.STRtree(network.edges['geometry'])
-
+    edges = network.edges
     new_geom = network.edges
     new_edge = []
     remove_edge=[]
+    new_edge_id = []
 
+
+    roundabouts = find_roundabouts(network)
+    testy = []
+    
     for roundabout in roundabouts:
+
         round_bound = pygeos.constructive.boundary(roundabout.geometry)
         round_centroid = pygeos.constructive.centroid(roundabout.geometry)
-        er = network.edges.loc[network.edges.geometry == roundabout.geometry]
-        remove_edge.append(er.index)
+        remove_edge.append(roundabout.Index)
 
         edges_intersect = _intersects_pyg(roundabout.geometry, network.edges['geometry'], sindex)
-        for e in edges_intersect:
-            ef = network.edges.loc[network.edges.geometry == e]
-            if er.index == ef.index: print("oo")
-            else: new_edge.append([ef.osm_id.item(), ef.highway.item(), pygeos.constructive.snap(ef.geometry.item(),round_centroid, tolerance=1)])
-            remove_edge.append(ef.index)
+        #Drop the roundabout from series so that no snapping happens on it
+        edges_intersect.drop(roundabout.Index,inplace=True)
+        #index at e[0] geometry at e[1] of edges that intersect with 
+        for e in edges_intersect.items():
+            edge = edges.iloc[e[0]]
+            start = pygeom.get_point(e[1],0)
+            end = pygeom.get_point(e[1],-1)
+            first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
+            #print(first_co_is_closer)
+            #print("start ",start," and end ", end)
+            co_ords = pygeos.coordinates.get_coordinates(edge.geometry)
+            centroid_co = pygeos.coordinates.get_coordinates(round_centroid)
+            #print(type(co_ords))
+            #print(type(centroid_co))
+            if first_co_is_closer: 
+                new_co = np.concatenate((centroid_co,co_ords))
+            else:
+                new_co = np.concatenate((co_ords,centroid_co))
+            snap_line = pygeos.linestrings(new_co)
+
+            snap_line = pygeos.linestrings(new_co)
+            #an edge should never connect to more than 2 roundabouts, if it does this will break
+            if edge.osm_id in new_edge_id:
+                print(edge.osm_id)
+                a = []
+                counter = 0
+                for x in new_edge:
+                    if x[0]==edge.osm_id:
+                        a = counter
+                    counter += 1
+                double_edge = new_edge.pop(a)
+                start = pygeom.get_point(double_edge[2],0)
+                end = pygeom.get_point(double_edge[2],-1)
+                first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
+                co_ords = pygeos.coordinates.get_coordinates(double_edge[2])
+                if first_co_is_closer: 
+                    new_co = np.concatenate((centroid_co,co_ords))
+                else:
+                    new_co = np.concatenate((co_ords,centroid_co))
+                snap_line = pygeos.linestrings(new_co)
+                new_edge.append([edge.osm_id, edge.highway, snap_line])
+
+            else:
+                new_edge.append([edge.osm_id, edge.highway, snap_line])
+                new_edge_id.append(edge.osm_id)
+            remove_edge.append(e[0])
 
     new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
-    remove_edge = np.unique(remove_edge)
-    edges = network.edges.drop(remove_edge)
-    ges = pd.concat([edges,new])
+    with Geopackage('final.gpkg', 'w') as out:
+        out.add_layer(new, name='nes', crs='EPSG:4326')
+    dg = network.edges.loc[~network.edges.index.isin(remove_edge)]
+    
+    ges = pd.concat([dg,new])
+
     return Network(edges=ges, nodes=network.nodes)
 
 #Simply returns a dataframe of nodes with degree 1, technically not all of 
@@ -959,13 +1005,13 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
 #returns a geopandas dataframe of a simplified network
 def simplify_network_from_gdf(gdf):
     net = Network(edges=gdf)
-    #net = clean_roundabouts(net)
+    net = clean_roundabouts(net)
     net = add_endpoints(net)
-    net = split_edges_at_nodes_pyg(net)
+    #net = split_edges_at_nodes_pyg(net)
     net = add_ids(net)
     net = add_topology(net)
     net = drop_hanging_nodes(net)
-    net = merge_2(net)
+    #net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net) 
     #with Geopackage('final.gpkg', 'w') as out:
