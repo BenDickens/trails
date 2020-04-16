@@ -138,7 +138,7 @@ def add_topology(network, id_col='id'):
         except:
             bugs.append(edge.id)
             to_ids.append("")
-    print(bugs)
+    print(len(bugs)," Edges not connected to nodes")
     
     edges = network.edges.copy()
     nodes = network.nodes.copy()
@@ -420,7 +420,6 @@ def clean_roundabouts(network):
             snap_line = pygeos.linestrings(new_co)
             #an edge should never connect to more than 2 roundabouts, if it does this will break
             if edge.osm_id in new_edge_id:
-                print(edge.osm_id)
                 a = []
                 counter = 0
                 for x in new_edge:
@@ -445,11 +444,9 @@ def clean_roundabouts(network):
             remove_edge.append(e[0])
 
     new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
-    with Geopackage('final.gpkg', 'w') as out:
-        out.add_layer(new, name='nes', crs='EPSG:4326')
     dg = network.edges.loc[~network.edges.index.isin(remove_edge)]
     
-    ges = pd.concat([dg,new])
+    ges = pd.concat([dg,new]).reset_index()
 
     return Network(edges=ges, nodes=network.nodes)
 
@@ -501,7 +498,7 @@ def add_degree(network):
 #given a distance(degrees) threshold.  This primarily happens when 
 #a road was connected to residential areas, most often these are link
 #roads that no longer do so
-def drop_hanging_nodes(network, tolerance = 0.0005):
+def drop_hanging_nodes(network, tolerance = 0.005):
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
     else: deg = network.nodes['degree'].to_numpy()
@@ -522,6 +519,11 @@ def drop_hanging_nodes(network, tolerance = 0.0005):
         #If the edge is shorter than the tolerance
         #add the ID to the drop list and update involved node degrees
         if dist < tolerance:
+            edge_id_drop.append(d.id)
+            deg[d.from_id] -= 1
+            deg[d.to_id] -= 1
+        # drops disconnected edges, some may still persist since we have not merged yet
+        if deg[d.from_id] == 1 and deg[d.to_id] == 1: 
             edge_id_drop.append(d.id)
             deg[d.from_id] -= 1
             deg[d.to_id] -= 1
@@ -592,24 +594,28 @@ def merge_2(network):
         newEdge.append(edgePath2.geometry)
         #While the next node along the path is degree 2 keep traversing
         while deg[nextNode1] == 2:
-            deg[nextNode1] = 0
-            n2.discard(nextNode1)
             eID = set(edg_sindex.query(nodGeom[nextNode1],predicate='intersects'))
             eID.discard(edgePath1.id)
-            edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
-            key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
+            try:
+                edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
+                key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
+            except: continue
+            deg[nextNode1] = 0
+            n2.discard(nextNode1)
             nextNode1 = edgePath1.to_id if edgePath1.from_id==nextNode1 else edgePath1.from_id
             newEdge.append(edgePath1.geometry)
             eIDtoRemove.append(edgePath1.id)
 
         while deg[nextNode2] == 2:
-            deg[nextNode2] = 0
-            n2.discard(nextNode2)
             eID = set(edg_sindex.query(nodGeom[nextNode2],predicate='intersects'))
             eID.discard(edgePath2.id)
-            edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
-            key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
-            nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
+            try:
+                edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
+                key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
+                nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
+            except: continue
+            deg[nextNode2] = 0
+            n2.discard(nextNode2)
             newEdge.append(edgePath2.geometry)
             eIDtoRemove.append(edgePath2.id)
         #Update the information of the first edge
@@ -1007,16 +1013,17 @@ def simplify_network_from_gdf(gdf):
     net = Network(edges=gdf)
     net = clean_roundabouts(net)
     net = add_endpoints(net)
-    #net = split_edges_at_nodes_pyg(net)
+    net = split_edges_at_nodes_pyg(net) 
     net = add_ids(net)
     net = add_topology(net)
     net = drop_hanging_nodes(net)
-    #net = merge_2(net)
+    net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net) 
     #with Geopackage('final.gpkg', 'w') as out:
-     #   out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
-      #  out.add_layer(net.edges, name="edges",crs='EPSG:4326')
+        #out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
+        #out.add_layer(net.edges, name="edges",crs='EPSG:4326')
+      
     return net
 
 #Creates an igraph from geodataframe with the distances as weights. 
