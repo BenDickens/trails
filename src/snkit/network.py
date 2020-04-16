@@ -230,14 +230,16 @@ def split_multilinestrings(network):
 #as shapely!
 #Mainly kept in to remind us to move to pygeos once integrated with GeoPandas
 def line_merge(x):
-    if x.geom_type == 'MultiLineString':
-        return shapely.wkb.loads(pygeos.to_wkb(pygeos.linear.line_merge(pygeos.from_shapely(x))))
+    if pygeom.get_type_id(x) == '5':
+        print("why")
+        print(x)
+        return pygeos.linear.line_merge(x)
     else: return x
 
 #Same as above
 def merge_all_multi(network):
     edges = network.edges.copy()
-    edges['geometry']= edges.geometry.apply(lambda x: merge_multilinestring(x))
+    edges['geometry']= edges.geometry.apply(lambda x: line_merge(x))
     return Network(edges=edges,nodes=network.nodes)
 
 def merge_multilinestring(geom):
@@ -1018,13 +1020,35 @@ def simplify_network_from_gdf(gdf):
     net = add_topology(net)
     net = drop_hanging_nodes(net)
     net = merge_2(net)
+    net = merge_all_multi(net)
+
     net =reset_ids(net) 
     net = add_distances(net) 
+    net = merge_all_multi(net)
+    net = quickFix(net)
+
+
     #with Geopackage('final.gpkg', 'w') as out:
         #out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
         #out.add_layer(net.edges, name="edges",crs='EPSG:4326')
       
     return net
+
+def quickFix(net):
+    edges = net.edges.copy()
+    a = []
+    rem = []
+    for edge in edges.itertuples():
+        if not pygeos.get_num_geometries(edge.geometry) ==1:
+            b = pygeos.get_num_geometries(edge.geometry)
+            print(b)
+            for x in range(b):
+                a.append(pygeom.get_geometry(edge.geometry,x)) 
+           
+            rem.append(edge.id)
+    edges = edges.loc[~edges.id.isin(rem)]
+    #a should have the individual linestrings in it 
+    return Network(edges=edges,nodes=net.nodes)
 
 #Creates an igraph from geodataframe with the distances as weights. 
 def igraph_from_gdf(gdf):
