@@ -231,8 +231,6 @@ def split_multilinestrings(network):
 #Mainly kept in to remind us to move to pygeos once integrated with GeoPandas
 def line_merge(x):
     if pygeom.get_type_id(x) == '5':
-        print("why")
-        print(x)
         return pygeos.linear.line_merge(x)
     else: return x
 
@@ -489,6 +487,7 @@ def add_distances(network):
 def calculate_degree(network):
     #the number of nodes(from index) to use as the number of bins
     ndC = len(network.nodes.index)
+    if ndC-1 > max(network.edges.from_id) and ndC-1 > max(network.edges.to_id): print("Calculate_degree possibly unhappy")
     return np.bincount(network.edges['from_id'],None,ndC) + np.bincount(network.edges['to_id'],None,ndC)
 
 #Adds a degree column to the node geodataframe 
@@ -567,6 +566,7 @@ def merge_2(network):
     #nodes
     nodGeom = nod['geometry']
     eIDtoRemove =[]
+
     c = 0
     pbar = tqdm(total=len(n2))
     while n2:   
@@ -596,12 +596,14 @@ def merge_2(network):
         newEdge.append(edgePath2.geometry)
         #While the next node along the path is degree 2 keep traversing
         while deg[nextNode1] == 2:
+            if not deg[nextNode1] == 2: continue
             eID = set(edg_sindex.query(nodGeom[nextNode1],predicate='intersects'))
             eID.discard(edgePath1.id)
             try:
                 edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
                 key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
-            except: continue
+            except: 
+                continue
             deg[nextNode1] = 0
             n2.discard(nextNode1)
             nextNode1 = edgePath1.to_id if edgePath1.from_id==nextNode1 else edgePath1.from_id
@@ -609,15 +611,16 @@ def merge_2(network):
             eIDtoRemove.append(edgePath1.id)
 
         while deg[nextNode2] == 2:
+            if not deg[nextNode2] == 2: continue
             eID = set(edg_sindex.query(nodGeom[nextNode2],predicate='intersects'))
             eID.discard(edgePath2.id)
             try:
                 edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
                 key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
-                nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
             except: continue
             deg[nextNode2] = 0
             n2.discard(nextNode2)
+            nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
             newEdge.append(edgePath2.geometry)
             eIDtoRemove.append(edgePath2.id)
         #Update the information of the first edge
@@ -631,7 +634,7 @@ def merge_2(network):
     edg = edg.loc[~(edg.id.isin(eIDtoRemove))].reset_index(drop=True)
     #We remove all degree 0 nodes, including those found in dropHanging
     n = nod.loc[nod.degree > 0].reset_index(drop=True)
-
+    #n=nod.reset_index(drop=True)
     return Network(nodes=n,edges=edg)
 
 
@@ -825,10 +828,6 @@ def line_endpoints(line):
     #end = Point(line.coords[-1])
     return start, end
 
-def line_endpoints_pyg(line):
-    start = pygeos.points(3,4)
-    print(start)
-
 
 def split_edge_at_points(edge, points, tolerance=1e-9):
     """Split edge at point/multipoint
@@ -1003,7 +1002,7 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
 
     # combine all new edges
     edges = pd.DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
-                         columns=['osm_id','geometry','infra_type'])
+                         columns=['osm_id','geometry','highway'])
     # return new network with split edges
     return Network(
         nodes=network.nodes,
@@ -1021,18 +1020,54 @@ def simplify_network_from_gdf(gdf):
     net = drop_hanging_nodes(net)
     net = merge_2(net)
     net = merge_all_multi(net)
-
     net =reset_ids(net) 
-    net = add_distances(net) 
-    net = merge_all_multi(net)
-    net = quickFix(net)
-
-
+    net = add_distances(net)
+    net = quickFix(net) 
+    logicCheck(net)
+    net =quickFix(net)
     #with Geopackage('final.gpkg', 'w') as out:
         #out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
         #out.add_layer(net.edges, name="edges",crs='EPSG:4326')
       
     return net
+
+def logicCheck(net):
+    nodes = net.nodes.copy()
+    edges = net.edges.copy()
+
+    indexRef=False
+    eID = []
+    nID = []
+    for edge in edges.itertuples():
+        if edge.from_id > max(nodes.id) or edge.to_id > max(nodes.id):
+            indexRef =True
+    if indexRef:
+        print("ERROR: From or to id out of index")
+        print("max node id: ", max(nodes.id))
+        print("max from id: ", max(edges.from_id))
+        print("max to id: ", max(edges.to_id))
+
+    cur_deg = nodes['degree'].to_numpy()
+    cal_deg = ['1','2']
+    try:
+        cal_deg = calculate_degree(net)
+    except: print("Degree could not be calculated from from and to ids")
+
+    if not np.array_equal(cur_deg,cal_deg): print("Final node degree values do not correspond to edge dataframe")
+
+
+    bugs = net.edges.loc[edges.id.isin(eID)]
+
+    bugN = net.nodes.loc[nodes.id.isin(nID)]
+    try:
+        with Geopackage('bugs.gpkg', 'w') as out:
+            out.add_layer(net.edges, name='ed', crs='EPSG:4326')
+            out.add_layer(net.nodes,name='no',crs='EPSG:4326')
+    except:
+        print("eh")
+
+
+ 
 
 def quickFix(net):
     edges = net.edges.copy()
@@ -1041,7 +1076,7 @@ def quickFix(net):
     for edge in edges.itertuples():
         if not pygeos.get_num_geometries(edge.geometry) ==1:
             b = pygeos.get_num_geometries(edge.geometry)
-            print(b)
+            print("Multiple geometries in edge id: ", edge.id)
             for x in range(b):
                 a.append(pygeom.get_geometry(edge.geometry,x)) 
            
