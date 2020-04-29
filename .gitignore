@@ -9,6 +9,7 @@
 .pytest_cache
 build
 dist
+test_countries
 
 docs/source/api/*
 

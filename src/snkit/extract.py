@@ -5,7 +5,7 @@ import os
 import numpy 
 import gdal
 from tqdm import tqdm
-from shapely.wkb import loads
+from pygeos import from_wkb
 
 def query_b(geoType,keyCol,**valConstraint):
     """
@@ -57,13 +57,13 @@ def retrieve(osm_path,geoType,keyCol,**valConstraint):
         for feature in tqdm(sql_lyr):
             try:
                 if feature.GetField(keyCol[0]) is not None:
-                    shapely_geo = loads(feature.geometry().ExportToWkb()) 
-                    if shapely_geo is None:
+                    geom = from_wkb(feature.geometry().ExportToWkb()) 
+                    if geom is None:
                         continue
                     # field will become a row in the dataframe.
                     field = []
                     for i in cl: field.append(feature.GetField(i))
-                    field.append(shapely_geo)   
+                    field.append(geom)   
                     features.append(field)
             except:
                 print("WARNING: skipped OSM feature")   
@@ -71,10 +71,10 @@ def retrieve(osm_path,geoType,keyCol,**valConstraint):
         print("ERROR: Nonetype error when requesting SQL. Check required.")    
     cl.append('geometry')                   
     if len(features) > 0:
-        return geopandas.GeoDataFrame(features,columns=cl,crs={'init': 'epsg:4326'})
+        return pandas.DataFrame(features,columns=cl)
     else:
         print("WARNING: No features or No Memory. returning empty GeoDataFrame") 
-        return geopandas.GeoDataFrame(columns=['osm_id','geometry'],crs={'init': 'epsg:4326'})
+        return pandas.DataFrame(columns=['osm_id','geometry'])
 
 def roads(osm_path):
     """

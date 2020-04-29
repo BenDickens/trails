@@ -144,8 +144,6 @@ def add_topology(network, id_col='id'):
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
     edges['to_id'] = to_ids
-    with Geopackage('4.gpkg', 'w') as out:
-        out.add_layer(edges, name='ed', crs='EPSG:4326')
     edges = edges.loc[~(edges.id.isin(list(bugs)))].reset_index(drop=True)
 
     return Network(
