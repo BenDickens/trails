@@ -550,7 +550,7 @@ def drop_hanging_nodes(network, tolerance = 0.005):
 #2 edges, then traverse edges and nodes in both directions until a node
 #of degree !=2 is found, at this point stop in this direction. Reset the 
 #geometry and from/to ids for this edge, delete the nodes and edges traversed. 
-def merge_2(network):
+def merge_2(network, print_err=False):
     net = network
     nod = net.nodes.copy()
     edg = net.edges.copy()
@@ -633,15 +633,17 @@ def merge_2(network):
             possibly_delete.append(edgePath2.id)
         #Update the information of the first edge
         new_merged_geom = pygeos.line_merge(pygeos.multilinestrings([x for x in newEdge]))
-        if pygeom.get_type_id(new_merged_geom) == 5: 
-            print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
-        else:
+        if pygeom.get_type_id(new_merged_geom) == 1: 
             edg.at[info_first_edge,'geometry'] = new_merged_geom
             edg.at[info_first_edge,'from_id'] = nextNode1
             edg.at[info_first_edge,'to_id'] = nextNode2
             eIDtoRemove += possibly_delete
             for x in pos_0_deg:
                 deg[x] = 0
+        else:
+            if print_err: print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
+
+            
 
 
         pbar.update(1)
@@ -1032,22 +1034,15 @@ def split_edges_at_nodes_pyg(network, tolerance=1e-9):
 def simplify_network_from_gdf(gdf):
     net = Network(edges=gdf)
     net = clean_roundabouts(net)
-    #print(net.nodes)
     net = split_edges_at_nodes_pyg(net)
     net = add_endpoints(net)
-
-    #print(net.nodes)
-
     net = add_ids(net)
     net = add_topology(net)
     net = drop_hanging_nodes(net)
-    findMulti(net)
-
     net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net)
     net = merge_all_multi(net)
-    findMulti(net)
     logicCheck(net)
     net =quickFix(net)
     #with Geopackage('final.gpkg', 'w') as out:
@@ -1063,10 +1058,7 @@ def logicCheck(net):
     indexRef=False
     eID = []
     nID = []
-    for edge in edges.itertuples():
-        if edge.from_id > max(nodes.id) or edge.to_id > max(nodes.id):
-            indexRef =True
-    if indexRef:
+    if max(edges.from_id) > max(nodes.id) or max(edges.to_id) > max(nodes.id):
         print("ERROR: From or to id out of index")
         print("max node id: ", max(nodes.id))
         print("max from id: ", max(edges.from_id))
@@ -1118,6 +1110,8 @@ def quickFix(net):
             for x in range(b):
                 a.append(pygeom.get_geometry(edge.geometry,x)) 
            
+            rem.append(edge.id)
+        if edge.from_id > max(net.nodes.id) or edge.to_id > max(net.nodes.id):
             rem.append(edge.id)
     edges = edges.loc[~edges.id.isin(rem)]
     #a should have the individual linestrings in it 
