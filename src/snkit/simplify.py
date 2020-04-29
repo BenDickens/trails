@@ -11,7 +11,7 @@ import pygeos.geometry as pygeom
 import pyproj
 from timeit import default_timer as timer
 import igraph as ig
-from geopandas import GeoDataFrame
+from pandas import DataFrame
 from shapely.geometry import Point, LineString
 from tqdm import tqdm
 from pgpkg import Geopackage
@@ -31,24 +31,24 @@ class Network():
 
     Parameters
     ----------
-    nodes : geopandas.geodataframe.GeoDataFrame, optional
-    edges : geopandas.geodataframe.GeoDataFrame, optional
+    nodes : pandas.dataframe.DataFrame, optional
+    edges : pandas.dataframe.DataFrame, optional
 
     Attributes
     ----------
-    nodes : geopandas.geodataframe.GeoDataFrame
-    edges : geopandas.geodataframe.GeoDataFrame
+    nodes : pandas.dataframe.DataFrame
+    edges : pandas.dataframe.DataFrame
 
     """
     def __init__(self, nodes=None, edges=None):
         """
         """
         if nodes is None:
-            nodes = pd.DataFrame()
+            nodes = DataFrame()
         self.nodes = nodes
 
         if edges is None:
-            edges = pd.DataFrame()
+            edges = DataFrame()
         self.edges = edges
 
     def set_crs(self, crs=None, epsg=None):
@@ -123,7 +123,7 @@ def add_topology(network, id_col='id'):
     node_ends = []
     bugs = []
     sindex = pygeos.STRtree(network.nodes.geometry)
-    for edge in tqdm(network.edges.itertuples(), desc="topology", total=len(network.edges)):
+    for edge in tqdm(network.edges.itertuples(), desc="add_topology", total=len(network.edges)):
         start, end = line_endpoints(edge.geometry)
 
         try: 
@@ -138,7 +138,8 @@ def add_topology(network, id_col='id'):
         except:
             bugs.append(edge.id)
             to_ids.append(-1)
-    print(len(bugs)," Edges not connected to nodes")
+    if len(bugs) > 0:
+        print(len(bugs)," Edges not connected to nodes")
     edges = network.edges.copy()
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
@@ -205,7 +206,7 @@ def split_multilinestrings(network):
     simple_edge_geoms = []
     edges = network.edges
     for edge in tqdm(edges.itertuples(index=False), desc="split_multi", total=len(edges)):
-        if edge.geometry.geom_type == 'MultiLineString':
+        if pygeos.get_type_id(edge.geometry) == 5:
             edge_parts = list(edge.geometry)
         else:
             edge_parts = [edge.geometry]
@@ -213,10 +214,10 @@ def split_multilinestrings(network):
         for part in edge_parts:
             simple_edge_geoms.append(part)
 
-        attrs = GeoDataFrame([edge] * len(edge_parts))
+        attrs = DataFrame([edge] * len(edge_parts))
         simple_edge_attrs.append(attrs)
 
-    simple_edge_geoms = GeoDataFrame(simple_edge_geoms, columns=['geometry'])
+    simple_edge_geoms = DataFrame(simple_edge_geoms, columns=['geometry'])
     edges = pd.concat(simple_edge_attrs, axis=0).reset_index(drop=True).drop('geometry', axis=1)
     edges = pd.concat([edges, simple_edge_geoms], axis=1)
 
@@ -261,7 +262,7 @@ def snap_nodes(network, threshold=None):
     geom_col = geometry_column_name(network.nodes)
     nodes = pd.concat([
         network.nodes.drop(geom_col, axis=1),
-        GeoDataFrame(snapped_geoms, columns=[geom_col])
+        DataFrame(snapped_geoms, columns=[geom_col])
     ], axis=1)
 
     return Network(
@@ -277,7 +278,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     
     grab_all_edges = []
     new_nodes = []
-    for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
+    for edge in tqdm(network.edges.itertuples(index=False), desc="split_edges", total=len(network.edges)):
         hits_edges = nodes_intersecting(edge.geometry,network.edges['geometry'],sindex_edges, tolerance=1e-9)
         hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
         hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
@@ -287,7 +288,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
             pygeos.constructive.extract_unique_points(hits_edges.values))]#pygeos.multipoints(hits_edges.values)))]#pd.concat([hits_nodes,hits_edges]).values)))]
         
         
-        hits = pd.DataFrame(hits,columns=['geometry'])    
+        hits = DataFrame(hits,columns=['geometry'])    
 
         # get points and geometry as list of coordinates
         split_points = pygeos.coordinates.get_coordinates(pygeos.snap(hits,edge.geometry,tolerance=1e-9))
@@ -302,7 +303,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
         grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge.highway]*len(new_edges)])
 
     # combine all new edges
-    edges = pd.DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
+    edges = DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
                          columns=['osm_id','geometry','highway'])
 
     # return new network with split edges
@@ -400,7 +401,7 @@ def clean_roundabouts(network):
 
     roundabouts = find_roundabouts(network)
     
-    for roundabout in roundabouts:
+    for roundabout in tqdm(roundabouts,total=len(roundabouts),desc='roundabouts'):
         round_bound = pygeos.constructive.boundary(roundabout.geometry)
         round_centroid = pygeos.constructive.centroid(roundabout.geometry)
         remove_edge.append(roundabout.Index)
@@ -450,7 +451,7 @@ def clean_roundabouts(network):
                 new_edge_id.append(edge.osm_id)
             remove_edge.append(e[0])
 
-    new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
+    new = DataFrame(new_edge,columns=['osm_id','highway','geometry'])
     dg = network.edges.loc[~network.edges.index.isin(remove_edge)]
     
     ges = pd.concat([dg,new]).reset_index()
@@ -593,7 +594,7 @@ def merge_edges(network, print_err=False):
     nIDtoRemove =[]
 
     c = 0
-    pbar = tqdm(total=len(n2))
+    pbar = tqdm(total=len(n2),desc='merge_edges')
     while n2:   
         newEdge = []
         info_first_edge = []
@@ -703,7 +704,7 @@ def matching_gdf_from_geoms(gdf, geoms):
     to match an existing GeoDataFrame
     """
     geom_col = geometry_column_name(gdf)
-    return pd.DataFrame(geoms, columns=[geom_col])
+    return DataFrame(geoms, columns=[geom_col])
 
 def concat_dedup(dfs):
     """Concatenate a list of DataFrames, dropping duplicate geometries
@@ -812,7 +813,7 @@ def split_edge_at_points(edge, points, tolerance=1e-9):
     except ValueError:
         # if splitting fails, e.g. becuase points is empty GeometryCollection
         segments = [edge.geometry]
-    edges = GeoDataFrame([edge] * len(segments))
+    edges = DataFrame([edge] * len(segments))
     edges.geometry = segments
     return edges
 
@@ -954,21 +955,26 @@ def quickFix(net):
     #a should have the individual linestrings in it 
     return Network(edges=edges,nodes=net.nodes)
 
-#returns a pandas dataframe of a simplified network
-def simplify_network_from_gdf(gdf):
-    net = Network(edges=gdf)
+def simplify_network_from_df(df,save=True,save_name='network'):
+    """
+    Returns a pandas dataframe of a simplified network
+    """
+    net = Network(edges=df)
     net = clean_roundabouts(net)
+    net = split_multilinestrings(net)
     net = split_edges_at_nodes(net)
     net = add_endpoints(net)
     net = add_ids(net)
     net = add_topology(net)
     net = drop_hanging_nodes(net)
-    net = merge_2(net)
+    net = merge_edges(net)
     net = reset_ids(net) 
-    net = add_distances(net)
+    net = add_line_length(net)
     net = merge_multilinestrings(net)
-    logicCheck(net)
-    net =quickFix(net)
+    if save:
+        with Geopackage('{}.gpkg'.format(save_name), 'w') as out:
+            out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
+            out.add_layer(net.edges, name="edges",crs='EPSG:4326')
 
     return net
 
