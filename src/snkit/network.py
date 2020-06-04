@@ -41,14 +41,15 @@ def graph_load_largest(gdfNet):
     graph = graph_load(gdfNet)
     return graph.clusters().giant()
 
-def alt(gdfNet, isolated_threshold=2, OD_no = 100):
+def alt(edges, isolated_threshold=2.5, OD_no = 100, del_frac=0.02):
     g = ig.Graph(directed=False)
-    g.add_vertices(len(gdfNet.nodes))
-    zippy = zip(gdfNet.edges.from_id,gdfNet.edges.to_id)
+    max_node_id = max(max(edges.from_id),max(edges.to_id))
+    g.add_vertices(max_node_id+1)
+    zippy = zip(edges.from_id,edges.to_id)
     g.add_edges(zippy)
-    g.es['distance'] = gdfNet.edges.distance
-    randomOD = random.sample(range(g.vcount()),OD_no)
-    return percolation(g,randomOD,0.05, isolated_threshold)
+    g.es['distance'] = edges.distance
+    randomOD = random.sample(range(g.vcount()-1),OD_no)
+    return percolation(g,randomOD,del_frac, isolated_threshold)
 
 def edge_to_perc(edges, isolated_threshold = 2.5, OD_no=100, del_frac=0.02):
     g = ig.Graph(directed=False)
@@ -102,7 +103,13 @@ def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
     OD_orig = np.matrix(base_shortest_paths)
     #print(OD_orig)
     isolated_threshold = isolated_threshold
-    pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
+    #If the graph is fully connnected this is the number of possible trips
+    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
+    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
+    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
+    #consider passing a fully connected graph or ensure OD are part of giant component
+    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
+    pos_trip_no = theo_pos_trip_no - imp_trips
     #print(pos_trip_no)
     
     OD_thresh = OD_orig*isolated_threshold
@@ -128,7 +135,7 @@ def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
 
         compare_thresh = np.greater(perc_matrix,OD_thresh)
         over_thresh_no = np.sum(compare_thresh) / 2 
-        isolated_trip_results.append(over_thresh_no)
+        isolated_trip_results.append(over_thresh_no/pos_trip_no)
         if over_thresh_no >= pos_trip_no: break
  
         #showMore(exp_g)
@@ -159,6 +166,8 @@ def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
     edge_no = g.ecount() #10
     OD_node_no = len(OD_nodes)
     print("Number of Edges: ",edge_no)
+    #larg = graph.clusters().giant()
+    #print(larg.ecount())
     intervals = np.arange(0.01,1,0.2)
     tot_edge_length = np.sum(g.es['distance'])
     
@@ -166,7 +175,13 @@ def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
     OD_orig = np.matrix(base_shortest_paths)
     #print(OD_orig)
     isolated_threshold = isolated_threshold
-    pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
+    #If the graph is fully connnected this is the number of possible trips
+    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
+    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
+    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
+    #consider passing a fully connected graph or ensure OD are part of giant component
+    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
+    pos_trip_no = theo_pos_trip_no - imp_trips
     #print(pos_trip_no)
     
     OD_thresh = OD_orig*isolated_threshold
@@ -198,20 +213,8 @@ def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
         #showMore(exp_g)
         
         #if counter > counterMax: break
-    '''
-    if max(isolated_trip_results)<1:
-        print(exp_g.ecount(),g.ecount())
-        print(exp_g.vcount(),g.vcount())
-        print(thresh)
-        print(counter)
-        print(np.sum(exp_g.es['distance']))
-        exp_g.delete_edges(list(range(exp_g.ecount)))
-        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-        perc_matrix = np.matrix(new_shortest_paths)
-        compare_thresh = np.greater(perc_matrix,OD_thresh)
-        over_thresh_no = np.sum(compare_thresh) / 2 
-        isolated_trip_results.append(over_thresh_no/pos_trip_no)
-    '''
+    
+    
     x_ax = []
     frac_inc = 0
     for i in isolated_trip_results:
