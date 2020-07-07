@@ -6,15 +6,15 @@ import geopandas as gpd
 from extract import retrieve, mainRoads,roads,ferries,railway#, mainRoads_pyg
 import gdal
 import pygeos as pyg
-from timeit import default_timer as timer
-import shapely as shp
-from pgpkg import Geopackage
+#from timeit import default_timer as timer
+#import shapely as shp
+#from pgpkg import Geopackage
 import prepare as prep
 import simplify as simp
 import network as net
 import matplotlib.pyplot as plt
 import igraph as ig
-import feather
+#import feather
 import math
 gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(".","osmconf.ini"))
 
