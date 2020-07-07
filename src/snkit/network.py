@@ -41,6 +41,23 @@ def graph_load_largest(gdfNet):
     graph = graph_load(gdfNet)
     return graph.clusters().giant()
 
+
+#returns the largest component of a network object (network.edges pd  and network.nodes pd) with reset ids
+def largest_component_df(edges,nodes):
+    edges = edges
+    nodes = nodes
+    zippy = zip(edges['from_id'],edges['to_id'])
+    g = ig.Graph(directed=False)
+    g.add_vertices(len(nodes))
+    g.vs['id'] = nodes['id']
+    g.add_edges(zippy)
+    g.es['id'] = edges['id']
+    g = g.clusters().giant()
+    a = edges.loc[edges.id.isin(g.es()['id'])]
+    b = nodes.loc[nodes.id.isin(g.vs()['id'])]
+    return reset_ids(a,b)
+
+
 def alt(edges, isolated_threshold=2.5, OD_no = 100, del_frac=0.02):
     g = ig.Graph(directed=False)
     max_node_id = max(max(edges.from_id),max(edges.to_id))
@@ -51,7 +68,7 @@ def alt(edges, isolated_threshold=2.5, OD_no = 100, del_frac=0.02):
     randomOD = random.sample(range(g.vcount()-1),OD_no)
     return percolation(g,randomOD,del_frac, isolated_threshold)
 
-def edge_to_perc(edges, isolated_threshold = 2.5, OD_no=100, del_frac=0.02):
+def edge_to_perc(edges, isolated_threshold = 3, OD_no=100, del_frac=0.02):
     g = ig.Graph(directed=False)
     max_node_id = max(max(edges.from_id),max(edges.to_id))
     g.add_vertices(max_node_id+1)
@@ -244,7 +261,7 @@ def showMore(graph):
   
     layt=g.layout('kk')
     N = g.vcount()
-    labels = list(g.vs['name'])
+    labels = list(g.vs['id'])
     E = [e.tuple for e in g.es]
     Xn=[layt[k][0] for k in range(N)]
     Yn=[layt[k][1] for k in range(N)]
@@ -310,5 +327,32 @@ def showMore(graph):
     fig=Figure(data=data, layout=layout)
     py.iplot(fig, filename='network-igraph')
 
+#Resets the ids of the nodes and edges, editing the refereces in edge table 
+#using dict masking
+def reset_ids(edges, nodes):
+    nodes = nodes.copy()
+    edges = edges.copy()
+    to_ids =  edges['to_id'].to_numpy()
+    from_ids = edges['from_id'].to_numpy()
+    new_node_ids = range(len(nodes))
+    #creates a dictionary of the node ids and the actual indices
+    id_dict = dict(zip(nodes.id,new_node_ids))
+    nt = np.copy(to_ids)
+    nf = np.copy(from_ids) 
+    #updates all from and to ids, because many nodes are effected, this
+    #is quite optimal approach for large dataframes
+    for k,v in id_dict.items():
+        nt[to_ids==k] = v
+        nf[from_ids==k] = v
+    edges.drop(labels=['to_id','from_id'],axis=1,inplace=True)
+    edges['from_id'] = nf
+    edges['to_id'] = nt
+    nodes.drop(labels=['id'],axis=1,inplace=True)
+    nodes['id'] = new_node_ids
+    edges['id'] = range(len(edges))
+    edges.reset_index(drop=True,inplace=True)
+    nodes.reset_index(drop=True,inplace=True)
+    return edges,nodes
+
 if __name__ == '__main__':     
-    graph_example()
+    largest_component_df()

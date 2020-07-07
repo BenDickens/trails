@@ -460,6 +460,7 @@ def find_hanging_nodes(network):
 
 #This method adds a distance column using pygeos (converted from shapely)
 #assuming the new crs from the latitude and longitude of the first node
+#distance is in metres
 def add_distances(network):
     #Find crs of current gdf and arbitrary point(lat,lon) for new crs
     current_crs="epsg:4326"
@@ -482,6 +483,31 @@ def add_distances(network):
     return Network(
         nodes=network.nodes,
         edges=edges)
+
+#Time is in hours
+def add_travel_time(network):
+    if 'distance' not in network.nodes.columns:
+        network = add_distances(network)
+    speed_d = {
+    'motorway':80000,
+    'motorway_link': 65000,
+    'trunk': 60000,
+    'trunk_link':50000,
+    'primary': 50000, # metres ph
+    'primary_link':40000,
+    'secondary': 40000, # metres ph
+    'secondary_link':30000,
+    'tertiary':30000,
+    'tertiary_link': 20000,
+    'unclassified':20000,
+    'residential': 20000,  # mph
+    }
+    def calculate_time(edge):
+        return edge['distance'] / speed_d.get(edge['highway'])
+
+    network.edges['time'] = network.edges.apply(calculate_time,axis=1)
+    return network
+
 
 #Calculates the degree of the nodes from the from and to ids
 #It is not wise to call this method after removing nodes or edges 
@@ -1039,19 +1065,98 @@ def simplify_network_from_gdf(gdf):
     net = split_edges_at_nodes_pyg(net)
     net = add_endpoints(net)
     net = add_ids(net)
-    net = add_topology(net)
-    net = drop_hanging_nodes(net)
+    net = add_topology(net)    
+    net = drop_hanging_nodes(net)    
     net = merge_2(net)
     net =reset_ids(net) 
     net = add_distances(net)
     net = merge_all_multi(net)
     logicCheck(net)
     net =quickFix(net)
+    net = add_travel_time(net)
     #with Geopackage('final.gpkg', 'w') as out:
         #out.add_layer(net.nodes, name='nodes', crs='EPSG:4326')
         #out.add_layer(net.edges, name="edges",crs='EPSG:4326')
       
     return net
+
+
+#designed with the addition of ferries in mind, to snap eligible routes onto existing network
+#with special logic for loading unloading, left after other methods to protect from merge
+#splitting and dropping logic. keeps these edges seperate from road simplification. only issue
+#is the snapping threshold needs to be more forgiving as often nearest nodes have been merged away
+#worth looking at edge finding in some cases. also seems to be a good idea to 
+#ferries will have their own time calculation method
+def add_modal(gdf,alter_transport,threshold=0.02):
+    edges = gdf.edges.copy()
+    nodes = gdf.nodes.copy()
+    node_degree = nodes.degree.to_numpy()
+    sindex_nodes = pygeos.STRtree(nodes['geometry'])
+    sindex_edges = pygeos.STRtree(edges['geometry'])
+    new_edges = []
+    edge_id_counter = len(edges)
+    counter = 0
+    for route in alter_transport.itertuples():
+        route_geom = route.geometry
+        start = pygeom.get_point(route_geom,0)
+        end = pygeom.get_point(route_geom,-1)
+
+        near_start = _intersects_pyg(start,edges['geometry'],sindex_edges, tolerance=threshold)
+        near_end = _intersects_pyg(end,edges['geometry'],sindex_edges, tolerance=threshold)
+        near_start = near_start.index.values
+        near_end = near_end.index.values
+        print(near_end)
+        print(near_start)
+        if len(near_start) < 1 or len(near_end) < 1: continue
+
+        if len(near_start) > 1: 
+            near_start = min([edges.iloc[match_idx] for match_idx in near_start],
+                key=lambda match: pygeos.distance(start,match.geometry))
+            near_start = near_start.id
+
+        else: near_start = edges.id.iloc[near_start[0]]
+        if len(near_end) > 1: 
+            near_end = min([edges.iloc[match_idx] for match_idx in near_end],
+                key=lambda match: pygeos.distance(end,match.geometry))
+            near_end=near_end.id
+        else: near_end = edges.id.iloc[near_end[0]]
+        if near_end==near_start: 
+            print("for counter ", counter, "we skipped")
+            continue
+        #pick nodes to create edge
+        near_start = edges.iloc[near_start]
+        near_end = edges.iloc[near_end]
+        new_line_start = pygeos.coordinates.get_coordinates(route_geom)
+
+        from_is_closer = pygeos.measurement.distance(start, nodes.iloc[near_start.from_id].geometry) < pygeos.measurement.distance(start, nodes.iloc[near_start.to_id].geometry)
+        if from_is_closer:
+            start_id = near_start.from_id
+        else:
+            start_id = near_start.to_id
+        node_degree[start_id] += 1
+        new_line = np.concatenate((pygeos.coordinates.get_coordinates(nodes.iloc[start_id].geometry),new_line_start))
+        from_is_closer = pygeos.measurement.distance(end, nodes.iloc[near_end.from_id].geometry) < pygeos.measurement.distance(end, nodes.iloc[near_end.to_id].geometry)
+        if from_is_closer:
+            end_id = near_end.from_id
+        else:
+            end_id = near_end.to_id
+        node_degree[end_id] += 1
+        new_line = np.concatenate((new_line,pygeos.coordinates.get_coordinates(nodes.iloc[end_id].geometry)))
+        new_edges.append({'osm_id':route.osm_id,'geometry': pygeos.linestrings(new_line),'highway':route.highway,'id':edge_id_counter,'from_id':start_id,'to_id':end_id,'distance':999,'time':999})
+    
+    
+
+        counter+=1
+        
+    edges = edges.append(new_edges,ignore_index=True)
+    edges.reset_index(inplace=True)
+    return Network(edges = edges, nodes=nodes)
+        
+
+
+
+#def snap_pyg(edge,nodes):
+
 
 def logicCheck(net):
     nodes = net.nodes.copy()
