@@ -15,7 +15,7 @@ from geopandas import GeoDataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
 from tqdm import tqdm
-from pgpkg import Geopackage
+#from pgpkg import Geopackage
 
 # optional progress bars
 '''

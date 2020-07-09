@@ -18,8 +18,8 @@ import math
 gdal.SetConfigOption("OSM_CONFIG_FILE", "/scistor/ivm/bds550/snkit/src/snkit/osmconf.ini")
 
 countries = ['azerbaijan','bulgaria','jamaica']
-tiny = ['djibouti']
-continents=['africa','south-america','europe']
+tiny = ['monaco','tonga','djibouti']
+continents=['south-america']
 
 def filename(country):
     osm_prefix = '/scistor/ivm/bds550/snkit/src/snkit/osm_files/'
@@ -32,7 +32,7 @@ if __name__ == '__main__':
     #valConstraint = {'highway':["='primary' or ","='trunk' or ","='motorway' or ","='trunk_link' or ", "='primary_link' or ", "='secondary' or ","='tertiary' or ","='tertiary_link'"]}
     #cGDF = retrieve(filename('madagascar'), geometry, keyCol, **valConstraint)
     #allCountries = tiny.append(small.append(mid.append(dec)))    
-    for x in tiny:
+    for x in continents:
         print(x.capitalize())
         cGDF = mainRoads(filename(x))
         bob = simp.simplify_network_from_gdf(cGDF)
@@ -46,6 +46,6 @@ if __name__ == '__main__':
     plt.title("Simple percolation")
     plt.xlabel("Percentage of edges destroyed")
     plt.legend()
-    plt.savefig('/scistor/ivm/bds550/snkit/src/snkit/results/large_test.png')
+    plt.savefig('/scistor/ivm/bds550/snkit/src/snkit/results/sud_amer_test.png')
         
   
