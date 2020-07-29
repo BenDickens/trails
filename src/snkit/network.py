@@ -13,6 +13,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pygeos as pyg
 
+from pgpkg import Geopackage
+from numpy.ma import masked
+
+
 def metrics(graph):
     g = graph
     print("Number of edges: ", g.ecount())
@@ -85,51 +89,88 @@ def create_demand(OD_nodes, OD_orig, node_pop):
 
     demand = ((demand / demand.max()) * maxtrips)
     demand = np.ceil(demand).astype(int)
+    return demand
 
-def chooseOD(gridDF, nodes):
-    #possible_OD = np.random.choice(pop_density, size=len(pop_density), p=pop_density/pop_density.max())
+#Chooses nodes for OD matrix according to their population size stochastically
+def choose_OD(pos_OD, OD_no):
+    #print(pos_OD)
+    node_ids, tot_pops = zip(*pos_OD)
+    pop_probs = [x/sum(tot_pops) for x in tot_pops]
+    #OD nodes chosen
+    OD_nodes = list(np.random.choice(node_ids, size=OD_no, replace = False, p=pop_probs))
+    #print(OD_nodes)
+    #Population counts in a mapped list
+    node_positions = [node_ids.index(i) for i in OD_nodes]
+    #print(node_positions)
+    mapped_pops = [tot_pops[j] for j in node_positions]
+    #print(mapped_pops)
+    #returns the nodes, and their populations, should this be zipped?
+    return OD_nodes, mapped_pops
+
+
+#Returns an array of tuples, with the first value the node ID to consider, and the
+#second value the total population associated with this node
+#The tolerance is the size of the bounding box to search for nodes within
+def prepare_pos_OD(gridDF, nodes, tolerance = 0.1):
+    
     nodeIDs = []
     sindex = pyg.STRtree(nodes['geometry'])
 
+    pos_OD_nodes = []
+    pos_tot_pop = []
     for i in gridDF.itertuples():
-        print(i.geometry)
-        print(type(i.geometry))
-        ID = nearest(i.geometry, nodes, sindex)
-        print(ID)
+        ID = nearest(i.geometry, nodes, sindex, tolerance)
+        if ID > -1: 
+            pos_OD_nodes.append(ID)
+            pos_tot_pop.append(i.tot_pop)
+    a = nodes.loc[nodes.id.isin(pos_OD_nodes)]
+    with Geopackage('nodyALB.gpkg', 'w') as out:
+        out.add_layer(a, name='finanod', crs='EPSG:4326')
+    nodes = np.array([pos_OD_nodes])
+    node_unique = np.unique(nodes)
+    count = np.array([pos_tot_pop])
+    
+    #List comprehension to add total populations of recurring nodes 
+    final_pos_pop = [(i, count[nodes==i].sum()) for i in node_unique]
+    return final_pos_pop
 
+#WOULD IT BE BETTER TO USE HALF THE MINIMUM DISTANCE BETWEEN GRID POINTS AS THE TOLERANCE INSTEAD
 
-def nearest(geom, gdf,sindex):
-    """Find the element of a GeoDataFrame nearest a shapely geometry
-    """
-    #sindex = pygeos.STRtree(gdf['geometry'])
+def nearest(geom, gdf,sindex, tolerance):
     matches_idx = sindex.query(geom)
-    #pygeos.measurement.bounds(geom)
-    #matches_idx = gdf.sindex.nearest(geom.bounds)
-    nearest_geom = min(
-        [gdf.iloc[match_idx] for match_idx in matches_idx],
-        key=lambda match: pyg.measurement.distance(match.geometry,geom)
-    )
-    return nearest_geom
+    if not matches_idx.any():
+        buf = pyg.buffer(geom, tolerance)
+        matches_idx = sindex.query(buf,'contains').tolist()
+    try:
+        nearest_geom = min(
+            [gdf.iloc[match_idx] for match_idx in matches_idx],
+            key=lambda match: pyg.measurement.distance(match.geometry,geom)
+        )
+    except: 
+        print("Couldn't find node")
+        return -1
+    return nearest_geom.id
 
-def perc_Final(edges, del_frac, OD_list=[]):
+
+def perc_Final(edges, del_frac, OD_list=[], pop_list=[], GDP_per_capita=50000):
     result_df = []
-    OD_no = 100
     g = graph_load(edges)
-    if OD_list == []: OD_nodes = random.sample(range(g.vcount()-1),OD_no)
+    if OD_list == []: OD_nodes = random.sample(range(g.vcount()-1),100)
     else: OD_nodes = OD_list
-
     edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
-    node_pop = random.sample(range(4000), OD_no)
+    if pop_list == []: node_pop = random.sample(range(4000), OD_node_no)
+    else: node_pop = pop_list
 
 
     base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
+    #print(base_shortest_paths)
     OD_orig = np.matrix(base_shortest_paths)
     OD_thresh = OD_orig * 10
     
     demand = create_demand(OD_nodes, OD_orig, node_pop)
-    print(demand)
+    #rint(demand)
 
     exp_g = g.copy()
     trips_possible = True
@@ -150,7 +191,7 @@ def perc_Final(edges, del_frac, OD_list=[]):
         frac_counter += del_frac
         new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
         perc_matrix = np.matrix(new_shortest_paths)
-        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, 50000,round(frac_counter,3))  
+        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3))  
         result_df.append(results)
         
         
@@ -158,7 +199,7 @@ def perc_Final(edges, del_frac, OD_list=[]):
         if exp_edge_no < 1: break
         #if counter==4: break
     result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'])
-    print(result_df)
+    return result_df
 
 
 def simple_OD_calc(OD, comparisonOD,pos_trip_no):
@@ -238,6 +279,12 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
 
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, masked_demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, masked_demand)
+
+    if pct_isolated is masked: pct_isolated = 0
+    if pct_thirty_plus is masked: pct_thirty_plus = 0
+    if pct_twice_plus is masked: pct_twice_plus = 0
+    if pct_thrice_plus is masked: pct_thrice_plus = 0
+
 
     return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
 
