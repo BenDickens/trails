@@ -300,17 +300,14 @@ def merge_multilinestring(geom):
     Returns:
         geom (pygeos.geometry): A pygeos linestring geometry if merge was succesful. If not, it returns the input.
     """        
-    try:
-        if pygeom.get_type_id(edge.geometry) == '5':
-            geom_inb = pygeos.line_merge(geom)
-            if geom_inb.is_ring: # still something to fix if desired
-                return geom_inb
-            else:
-                return geom_inb
+    if pygeom.get_type_id(geom) == '5':
+        geom_inb = pygeos.line_merge(geom)
+        if geom_inb.is_ring: # still something to fix if desired
+            return geom_inb
         else:
-            return geom
-    except:
-        return pygeos.creation.geometrycollections([])
+            return geom_inb
+    else:
+        return geom
 
 def snap_nodes(network, threshold=None):
     """Move nodes (within threshold) to edges
@@ -596,7 +593,11 @@ def add_travel_time(network):
     'residential': 20000,  # mph
     }
     def calculate_time(edge):
-        return edge['distance'] / speed_d.get(edge['highway'])
+        try:
+            return edge['distance'] / speed_d.get(edge['highway'])
+        except:
+             return edge['distance'] / speed_d.get('unclassified')
+           
 
     network.edges['time'] = network.edges.apply(calculate_time,axis=1)
     return network
@@ -955,7 +956,7 @@ def nearest(geom, df,sindex):
     Returns:
         [type]: [description]
     """    
-    matches_idx = sindex.query(pygeos.buffer(geom,0.1))
+    matches_idx = sindex.query(geom)
     nearest_geom = min(
         [df.iloc[match_idx] for match_idx in matches_idx],
         key=lambda match: pygeos.measurement.distance(match.geometry,geom)
@@ -1226,7 +1227,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     )
 
 #returns a geopandas dataframe of a simplified network
-def simplify_network_from_df(df):
+def simplified_network(df):
     net = Network(edges=df)
     net = clean_roundabouts(net)
     net = split_edges_at_nodes(net)
@@ -1237,7 +1238,7 @@ def simplify_network_from_df(df):
     net = merge_edges(net)
     net = reset_ids(net) 
     net = add_distances(net)
-    net = merge_all_multi(net)
+    net = merge_multilinestrings(net)
     logicCheck(net)
     net =quickFix(net)
     net = add_travel_time(net)     
@@ -1375,7 +1376,7 @@ def quickFix(net):
     a = []
     rem = []
     for edge in edges.itertuples():
-        if not pygeos.get_num_geometries(edge.geometry) ==1:
+        if not pygeos.get_num_geometries(edge.geometry) == 1:
             b = pygeos.get_num_geometries(edge.geometry)
             print("Multiple geometries in edge id: ", edge.id)
             for x in range(b):
