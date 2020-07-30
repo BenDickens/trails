@@ -13,11 +13,13 @@ from rasterstats import zonal_stats
 
 def create_bbox(df):
     """Create bbox around dataframe
-    Arguments:
+
+    Args:
+        df ([type]): [description]
 
     Returns:
-
-    """
+        [type]: [description]
+    """    
     return pygeos.creation.box(pygeos.total_bounds(df.geometry)[0],
                                   pygeos.total_bounds(df.geometry)[1],
                                   pygeos.total_bounds(df.geometry)[2],
@@ -25,12 +27,15 @@ def create_bbox(df):
 
 def create_grid(bbox,height):
     """Create a vector-based grid
-    
-    Arguments:
+
+    Args:
+        bbox ([type]): [description]
+        height ([type]): [description]
 
     Returns:
-    """
-    
+        [type]: [description]
+    """    
+
     # set xmin,ymin,xmax,and ymax of the grid
     xmin, ymin = pygeos.total_bounds(bbox)[0],pygeos.total_bounds(bbox)[1]
     xmax, ymax = pygeos.total_bounds(bbox)[2],pygeos.total_bounds(bbox)[3]
@@ -64,11 +69,13 @@ def create_grid(bbox,height):
 
 def create_country_OD_points(country):
     """Create a list of OD points for the specified country 
-    
-    Arguments:
+
+    Args:
+        country ([type]): [description]
 
     Returns:
-    """
+        [type]: [description]
+    """    
     
         # set paths to data
         world_pop = 'C:\Data\worldpop\ppp_2018_1km_Aggregated.tif'
@@ -111,7 +118,8 @@ def create_country_OD_points(country):
         return clip_grid 
 
 def create_OD_points():
-      
+    """[summary]
+    """      
     #load data and convert to pygeos
     gdf = gpd.read_file('C:\Data\GADM\gadm36_levels.gpkg',layer=0)
     tqdm.pandas(desc='Convert geometries to pygeos')
