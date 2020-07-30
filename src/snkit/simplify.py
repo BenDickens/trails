@@ -5,15 +5,18 @@ Ben Dickens, Elco Koks & Tom Russell
 import os
 
 import numpy as np
-import shapely as sp
 import pandas as pd
-import shapely.errors
+
 import pygeos
 import pygeos.geometry as pygeom
+
 import pyproj
+
 from timeit import default_timer as timer
+
 import igraph as ig
-from geopandas import GeoDataFrame
+
+from pandas import DataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
 from tqdm import tqdm
@@ -35,15 +38,16 @@ class Network():
 
     Parameters
     ----------
-    nodes : geopandas.geodataframe.GeoDataFrame, optional
-    edges : geopandas.geodataframe.GeoDataFrame, optional
+    nodes : pandas.DataFrame, optional
+    edges : pandas.DataFrame, optional
 
     Attributes
     ----------
-    nodes : geopandas.geodataframe.GeoDataFrame
-    edges : geopandas.geodataframe.GeoDataFrame
+    nodes : pandas.DataFrame
+    edges : pandas.DataFrame
 
     """
+
     def __init__(self, nodes=None, edges=None):
         """
         """
@@ -96,11 +100,21 @@ class Network():
         self.edges.to_crs(crs, inplace=True)
         self.nodes.to_crs(crs, inplace=True)
 
+
 def add_ids(network, id_col='id', edge_prefix='', node_prefix=''):
     """Add or replace an id column with ascending ids
 
-    The ids are represented into int64s for easier conversion to numpy arrays
-    """
+    The ids are represented into int64s for easier conversion to numpy arrays    
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+        id_col (str, optional): [description]. Defaults to 'id'.
+        edge_prefix (str, optional): [description]. Defaults to ''.
+        node_prefix (str, optional): [description]. Defaults to ''.
+
+    Returns:
+        [type]: [description]
+    """    
     nodes = network.nodes.copy()
     if not nodes.empty:
         nodes = nodes.reset_index(drop=True)
@@ -119,11 +133,20 @@ def add_ids(network, id_col='id', edge_prefix='', node_prefix=''):
 
 def add_topology(network, id_col='id'):
     """Add or replace from_id, to_id to edges
-    """
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+        id_col (str, optional): [description]. Defaults to 'id'.
+
+    Returns:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+    """    
+
     from_ids = []
     to_ids = []
     node_ends = []
     bugs = []
+    
     sindex = pygeos.STRtree(network.nodes.geometry)
     for edge in tqdm(network.edges.itertuples(), desc="topology", total=len(network.edges)):
         start, end = line_endpoints(edge.geometry)
@@ -155,7 +178,13 @@ def add_topology(network, id_col='id'):
 
 def get_endpoints(network):
     """Get nodes for each edge endpoint
-    """
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
+    Returns:
+        [type]: [description]
+    """    
     endpoints = []
     for edge in tqdm(network.edges.itertuples(), desc="endpoints", total=len(network.edges)):
         if edge.geometry is None:
@@ -172,11 +201,18 @@ def get_endpoints(network):
             endpoints.append(end)
 
     # create dataframe to match the nodes geometry column name
-    return matching_gdf_from_geoms(network.nodes, endpoints)
+    return matching_df_from_geoms(network.nodes, endpoints)
 
 def add_endpoints(network):
     """Add nodes at line endpoints
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
+    Returns:
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """
+
     endpoints = get_endpoints(network)
     nodes = concat_dedup([network.nodes, endpoints])
 
@@ -187,9 +223,18 @@ def add_endpoints(network):
 
 def round_geometries(network, precision=3):
     """Round coordinates of all node points and vertices of edge linestrings to some precision
-    """
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+        precision (int, optional): [description]. Defaults to 3.
+
+    Returns:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+    """    
+
     def _set_precision(geom):
         return set_precision(geom, precision)
+
     network.nodes.geometry = network.nodes.geometry.apply(_set_precision)
     network.edges.geometry = network.edges.geometry.apply(_set_precision)
     return network
@@ -200,23 +245,30 @@ def split_multilinestrings(network):
 
     Ensures that edge geometries are all LineStrings, duplicates attributes over any
     created multi-edges.
+
+    Args:
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
+    Returns:
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """
+
     simple_edge_attrs = []
     simple_edge_geoms = []
     edges = network.edges
     for edge in tqdm(edges.itertuples(index=False), desc="split_multi", total=len(edges)):
-        if edge.geometry.geom_type == 'MultiLineString':
-            edge_parts = list(edge.geometry)
+        if pygeom.get_type_id(edge.geometry) == 5:
+            edge_parts = [x for x in pygeos.geometry.get_geometry(edge, pygeos.geometry.get_num_geometries(edge))]
         else:
             edge_parts = [edge.geometry]
 
         for part in edge_parts:
             simple_edge_geoms.append(part)
 
-        attrs = GeoDataFrame([edge] * len(edge_parts))
+        attrs = DataFrame([edge] * len(edge_parts))
         simple_edge_attrs.append(attrs)
 
-    simple_edge_geoms = GeoDataFrame(simple_edge_geoms, columns=['geometry'])
+    simple_edge_geoms = DataFrame(simple_edge_geoms, columns=['geometry'])
     edges = pd.concat(simple_edge_attrs, axis=0).reset_index(drop=True).drop('geometry', axis=1)
     edges = pd.concat([edges, simple_edge_geoms], axis=1)
 
@@ -225,45 +277,33 @@ def split_multilinestrings(network):
         edges=edges
     )
 
-def line_merge(x):
-    """[summary]
+def merge_multilinestrings(network):
+    """Try to merge all multilinestring geometries into linestring geometries.
 
     Args:
-        x ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
-    """
-    if pygeom.get_type_id(x) == '5':
-        return pygeos.linear.line_merge(x)
-    else: return x
-
-
-def merge_all_multi(network):
-    """[summary]
-
-    Args:
-        network ([type]): [description]
-
-    Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """    
     edges = network.edges.copy()
-    edges['geometry']= edges.geometry.apply(lambda x: line_merge(x))
-    return Network(edges=edges,nodes=network.nodes)
+    edges['geometry']= edges.geometry.apply(lambda x: merge_multilinestring(x))
+    return Network(edges=edges,
+        	nodes=network.nodes)
 
 def merge_multilinestring(geom):
     """Merge a MultiLineString to LineString
+
     Args:
-        geom ([type]): [description]
+        geom (pygeos.geometry): A pygeos geometry, most likely a linestring or a multilinestring
 
     Returns:
-        [type]: [description]
-    """     
+        geom (pygeos.geometry): A pygeos linestring geometry if merge was succesful. If not, it returns the input.
+    """        
     try:
         if pygeom.get_type_id(edge.geometry) == '5':
             geom_inb = pygeos.line_merge(geom)
-            if geom_inb.is_ring:
+            if geom_inb.is_ring: # still something to fix if desired
                 return geom_inb
             else:
                 return geom_inb
@@ -276,7 +316,7 @@ def snap_nodes(network, threshold=None):
     """Move nodes (within threshold) to edges
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         threshold ([type], optional): [description]. Defaults to None.
 
     Returns:
@@ -293,7 +333,7 @@ def snap_nodes(network, threshold=None):
     geom_col = geometry_column_name(network.nodes)
     nodes = pd.concat([
         network.nodes.drop(geom_col, axis=1),
-        GeoDataFrame(snapped_geoms, columns=[geom_col])
+        DataFrame(snapped_geoms, columns=[geom_col])
     ], axis=1)
 
     return Network(
@@ -305,7 +345,7 @@ def link_nodes_to_edges_within(network, distance, condition=None, tolerance=1e-9
     """Link nodes to all edges within some distance
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         distance ([type]): [description]
         condition ([type], optional): [description]. Defaults to None.
         tolerance ([type], optional): [description]. Defaults to 1e-9.
@@ -329,10 +369,10 @@ def link_nodes_to_edges_within(network, distance, condition=None, tolerance=1e-9
                 line = LineString([node.geometry, point])
                 new_edge_geoms.append(line)
 
-    new_nodes = matching_gdf_from_geoms(network.nodes, new_node_geoms)
+    new_nodes = matching_df_from_geoms(network.nodes, new_node_geoms)
     all_nodes = concat_dedup([network.nodes, new_nodes])
 
-    new_edges = matching_gdf_from_geoms(network.edges, new_edge_geoms)
+    new_edges = matching_df_from_geoms(network.edges, new_edge_geoms)
     all_edges = concat_dedup([network.edges, new_edges])
 
     # split edges as necessary after new node creation
@@ -347,7 +387,7 @@ def link_nodes_to_nearest_edge(network, condition=None):
     """Link nodes to all edges within some distance
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         condition ([type], optional): [description]. Defaults to None.
 
     Returns:
@@ -369,10 +409,10 @@ def link_nodes_to_nearest_edge(network, condition=None):
             line = LineString([node.geometry, point])
             new_edge_geoms.append(line)
 
-    new_nodes = matching_gdf_from_geoms(network.nodes, new_node_geoms)
+    new_nodes = matching_df_from_geoms(network.nodes, new_node_geoms)
     all_nodes = concat_dedup([network.nodes, new_nodes])
 
-    new_edges = matching_gdf_from_geoms(network.edges, new_edge_geoms)
+    new_edges = matching_df_from_geoms(network.edges, new_edge_geoms)
     all_edges = concat_dedup([network.edges, new_edges])
 
     # split edges as necessary after new node creation
@@ -382,16 +422,14 @@ def link_nodes_to_nearest_edge(network, condition=None):
     )
     return split_edges_at_nodes(unsplit)
 
-#Methods to clean roundabouts and junctions should be done before
-#splitting edges at nodes to avoid logic conflicts
 def find_roundabouts(network):
-    """[summary]
+    """Methods to find roundabouts
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
+        roundabouts (list): Returns the edges that can be identified as roundabouts
     """    
     roundabouts = []
     for edge in network.edges.itertuples():
@@ -400,13 +438,14 @@ def find_roundabouts(network):
 
 
 def clean_roundabouts(network):
-    """[summary]
+    """Methods to clean roundabouts and junctions should be done before
+        splitting edges at nodes to avoid logic conflicts
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """    
 
     sindex = pygeos.STRtree(network.edges['geometry'])
@@ -486,7 +525,7 @@ def find_hanging_nodes(network):
         these are "hanging"
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
         [type]: [description]
@@ -501,13 +540,13 @@ def add_distances(network):
     distance is in metres
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """    
 
-    #Find crs of current gdf and arbitrary point(lat,lon) for new crs
+    #Find crs of current df and arbitrary point(lat,lon) for new crs
     current_crs="epsg:4326"
     #The commented out crs does not work in all cases
     #current_crs = [*network.edges.crs.values()]
@@ -530,13 +569,14 @@ def add_distances(network):
         edges=edges)
 
 def add_travel_time(network):
-    """Time is in hours
+    """Add travel time column to network edges. Time is in hours
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
     """    
     if 'distance' not in network.nodes.columns:
         network = add_distances(network)
@@ -569,25 +609,30 @@ def calculate_degree(network):
     without first resetting the ids
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
-        [type]: [description]
+        Connectivity degree (numpy.array): [description]
     """    
     #the number of nodes(from index) to use as the number of bins
     ndC = len(network.nodes.index)
     if ndC-1 > max(network.edges.from_id) and ndC-1 > max(network.edges.to_id): print("Calculate_degree possibly unhappy")
     return np.bincount(network.edges['from_id'],None,ndC) + np.bincount(network.edges['to_id'],None,ndC)
 
-#Adds a degree column to the node geodataframe 
+#Adds a degree column to the node dataframe 
 def add_degree(network):
     """[summary]
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
+    Returns:
+        network (class): A network composed of nodes (points in space) and edges (lines)        
     """    
     degree = calculate_degree(network)
     network.nodes['degree'] = degree
+
+    return network
 
 
 def drop_hanging_nodes(network, tolerance = 0.005):
@@ -596,11 +641,12 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     areas, most often these are link roads that no longer do so.
 
     Args:
-        network ([type]): [description]
-        tolerance (float, optional): [description]. Defaults to 0.005.
+        network (class): A network composed of nodes (points in space) and edges (lines)
+        tolerance (float, optional): The maximum allowed distance from hanging nodes to the network. Defaults to 0.005.
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
     """    
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
@@ -642,7 +688,7 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     #nod = n.loc[n.degree > 0].reset_index(drop=True)
     return Network(nodes = n,edges=edg)
 
-def merge_2(network, print_err=False):
+def merge_edges(network, print_err=False):
     """This method removes all degree 2 nodes and merges their associated edges, at 
     the moment it arbitrarily uses the first edge's attributes for the new edges 
     column attributes, in the future the mean or another measure can be used 
@@ -652,11 +698,11 @@ def merge_2(network, print_err=False):
     geometry and from/to ids for this edge, delete the nodes and edges traversed. 
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         print_err (bool, optional): [description]. Defaults to False.
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
     """    
     net = network
     nod = net.nodes.copy()
@@ -760,8 +806,6 @@ def merge_2(network, print_err=False):
     #n=nod.reset_index(drop=True)
     return Network(nodes=n,edges=edg)
 
-
-
 def find_closest_2_edges(edgeIDs, nodeID, edges, nodGeometry):
     """Returns the 2 edges connected to the current node
 
@@ -781,103 +825,33 @@ def find_closest_2_edges(edgeIDs, nodeID, edges, nodGeometry):
             key=lambda match:  pygeos.distance(nodGeometry,match.geometry))
     return edgePath1, edgePath2
 
-
-def merge_edges(network):
-    """Merge edges that share a node with a connectivity degree of 2
-
-    Args:
-        network ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """
-
-    if 'degree' not in network.nodes.columns:
-        network.nodes['degree'] = network.nodes.id.apply(lambda x:
-                                                 node_connectivity_degree(x,network))
-
-    degree2 = list(network.nodes.id.loc[network.nodes.degree == 2])
-    d2_set = set(degree2)
-    node_paths = []
-    edge_paths = []
-    print(d2_set)
-    while d2_set:
-        popped_node = d2_set.pop()
-        node_path = [popped_node]
-        candidates = set([popped_node])
-        print(candidates)
-        while candidates:
-            popped_cand = candidates.pop()
-            matches = list(np.unique(network.edges[['from_id','to_id']].loc[(
-                    (network.edges.from_id.isin([popped_cand])) |
-                    (network.edges.to_id.isin([popped_cand])))].values))
-            matches.remove(popped_cand)
-            for match in matches:
-                if match in node_path:
-                    continue
-
-                if match in degree2:
-                    candidates.add(match)
-                    node_path.append(match)
-                    d2_set.remove(match)
-                else:
-                    node_path.append(match)
-        if len(node_path) > 2:
-            node_paths.append(node_path)
-            edge_paths.append(network.edges.loc[(
-                    (network.edges.from_id.isin(node_path)) &
-                    (network.edges.to_id.isin(node_path)))])
-
-    concat_edge_paths = []
-    unique_edge_ids = set()
-    for edge_path in edge_paths:
-        unique_edge_ids.update(list(edge_path.id))
-        #if edge_path.bridge.isnull().any():
-         #   edge_path = edge_path.copy()
-          #  edge_path['bridge'] = 'yes'
-        concat_edge_paths.append(edge_path.dissolve(by=['infra_type'], aggfunc='first'))
-
-    edges_new = network.edges.copy()
-    edges_new = edges_new.loc[~(edges_new.id.isin(list(unique_edge_ids)))]
-    edges_new.geometry = edges_new.geometry.apply(merge_multilinestring)
-    network.edges = pd.concat([edges_new,pd.concat(concat_edge_paths).reset_index()],sort=False)
-
-    nodes_new = network.nodes.copy()
-    network.nodes = nodes_new.loc[~(nodes_new.id.isin(list(degree2)))]
-
-    return Network(
-        nodes=network.nodes,
-        edges=network.edges
-    )
-
-
-def geometry_column_name(gdf):
+def geometry_column_name(df):
     """Get geometry column name, fall back to 'geometry'
 
     Args:
-        gdf ([type]): [description]
+        df (pandas.DataFrame): [description]
 
     Returns:
-        [type]: [description]
+        geom_col (string): [description]
     """    
     try:
-        geom_col = gdf.geometry.name
+        geom_col = df.geometry.name
     except AttributeError:
         geom_col = 'geometry'
     return geom_col
 
 
-def matching_gdf_from_geoms(gdf, geoms):
-    """Create a geometry-only GeoDataFrame with column name to match an existing GeoDataFrame
+def matching_df_from_geoms(df, geoms):
+    """Create a geometry-only DataFrame with column name to match an existing DataFrame
 
     Args:
-        gdf ([type]): [description]
-        geoms ([type]): [description]
+        df (pandas.DataFrame): [description]
+        geoms (numpy.array): numpy array with pygeos geometries
 
     Returns:
         [type]: [description]
     """    
-    geom_col = geometry_column_name(gdf)
+    geom_col = geometry_column_name(df)
     return pd.DataFrame(geoms, columns=[geom_col])
 
 def concat_dedup(dfs):
@@ -897,11 +871,11 @@ def concat_dedup(dfs):
     return cat_dedup
 
 def node_connectivity_degree(node, network):
-    """[summary]
+    """Get the degree of connectivity for a node.
 
     Args:
         node ([type]): [description]
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
         [type]: [description]
@@ -912,30 +886,30 @@ def node_connectivity_degree(node, network):
             ]
     )
 
-def drop_duplicate_geometries(gdf, keep='first'):
+def drop_duplicate_geometries(df, keep='first'):
     """Drop duplicate geometries from a dataframe
 
     Convert to wkb so drop_duplicates will work as discussed 
     in https://github.com/geopandas/geopandas/issues/521
 
     Args:
-        gdf ([type]): [description]
+        df (pandas.DataFrame): [description]
         keep (str, optional): [description]. Defaults to 'first'.
 
     Returns:
         [type]: [description]
     """    
 
-    mask = gdf.geometry.apply(lambda geom: pygeos.to_wkb(geom))
+    mask = df.geometry.apply(lambda geom: pygeos.to_wkb(geom))
     # use dropped duplicates index to drop from actual dataframe
-    return gdf.iloc[mask.drop_duplicates(keep).index]
+    return df.iloc[mask.drop_duplicates(keep).index]
 
 def nearest_point_on_edges(point, edges):
     """Find nearest point on edges to a point
 
     Args:
-        point ([type]): [description]
-        edges ([type]): [description]
+        point (pygeos.geometry): [description]
+        edges (network.edges): [description]
 
     Returns:
         [type]: [description]
@@ -948,8 +922,8 @@ def nearest_node(point, nodes,sindex):
     """Find nearest node to a point
 
     Args:
-        point ([type]): [description]
-        nodes ([type]): [description]
+        point *pygeos.geometry): [description]
+        nodes (network.nodes): [description]
         sindex ([type]): [description]
 
     Returns:
@@ -961,8 +935,8 @@ def nearest_edge(point, edges,sindex):
     """Find nearest edge to a point
 
     Args:
-        point ([type]): [description]
-        edges ([type]): [description]
+        point (pygeos.geometry): [description]
+        edges (network.edges): [description]
         sindex ([type]): [description]
 
     Returns:
@@ -970,20 +944,20 @@ def nearest_edge(point, edges,sindex):
     """    
     return nearest(point, edges,sindex)
 
-def nearest(geom, gdf,sindex):
+def nearest(geom, df,sindex):
     """Find the element of a DataFrame nearest a geometry
 
     Args:
-        geom ([type]): [description]
-        gdf ([type]): [description]
+        geom (pygeos.geometry): [description]
+        df (pandas.DataFrame): [description]
         sindex ([type]): [description]
 
     Returns:
         [type]: [description]
     """    
-    matches_idx = sindex.query(geom)
+    matches_idx = sindex.query(pygeos.buffer(geom,0.1))
     nearest_geom = min(
-        [gdf.iloc[match_idx] for match_idx in matches_idx],
+        [df.iloc[match_idx] for match_idx in matches_idx],
         key=lambda match: pygeos.measurement.distance(match.geometry,geom)
     )
     return nearest_geom
@@ -992,8 +966,8 @@ def edges_within(point, edges, distance):
     """Find edges within a distance of point
 
     Args:
-        point ([type]): [description]
-        edges ([type]): [description]
+        point (pygeos.geometry): [description]
+        edges (network.edges): [description]
         distance ([type]): [description]
 
     Returns:
@@ -1001,25 +975,25 @@ def edges_within(point, edges, distance):
     """    
     return d_within(point, edges, distance)
 
-def d_within(geom, gdf, distance):
-    """Find the subset of a GeoDataFrame within some distance of a shapely geometry
+def d_within(geom, df, distance):
+    """Find the subset of a DataFrame within some distance of a shapely geometry
 
     Args:
-        geom ([type]): [description]
-        gdf ([type]): [description]
+        geom (pygeos.geometry): [description]
+        df (pandas.DataFrame): [description]
         distance ([type]): [description]
 
     Returns:
         [type]: [description]
     """    
-    return _intersects(geom, gdf, distance)
+    return _intersects(geom, df, distance)
 
-def _intersects(geom, gdf, sindex,tolerance=1e-9):
+def _intersects(geom, df, sindex,tolerance=1e-9):
     """[summary]
 
     Args:
-        geom ([type]): [description]
-        gdf ([type]): [description]
+        geom (pygeos.geometry): [description]
+        df ([type]): [description]
         sindex ([type]): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
@@ -1031,38 +1005,38 @@ def _intersects(geom, gdf, sindex,tolerance=1e-9):
         # can have an empty buffer with too small a tolerance, fallback to original geom
         buffer = geom
     try:
-        return _intersects_gdf(buffer, gdf,sindex)
+        return _intersects_df(buffer, df,sindex)
     except: 
         # can exceptionally buffer to an invalid geometry, so try re-buffering
         buffer = pygeos.buffer(geom,0)
-        return _intersects_gdf(buffer, gdf,sindex)
+        return _intersects_df(buffer, df,sindex)
   
-def _intersects_gdf(geom, gdf,sindex):
+def _intersects_df(geom, df,sindex):
     """[summary]
 
     Args:
         geom ([type]): [description]
-        gdf ([type]): [description]
+        df ([type]): [description]
         sindex ([type]): [description]
 
     Returns:
         [type]: [description]
     """    
-    return gdf[sindex.query(geom,'intersects')]
+    return df[sindex.query(geom,'intersects')]
 
-def intersects(geom, gdf, sindex, tolerance=1e-9):
+def intersects(geom, df, sindex, tolerance=1e-9):
     """Find the subset of a GeoDataFrame intersecting with a shapely geometry
 
     Args:
         geom ([type]): [description]
-        gdf ([type]): [description]
+        df ([type]): [description]
         sindex ([type]): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
         [type]: [description]
     """    
-    return _intersects(geom, gdf, sindex, tolerance)
+    return _intersects(geom, df, sindex, tolerance)
 
 def nodes_intersecting(line,nodes,sindex,tolerance=1e-9):
     """Find nodes intersecting line
@@ -1096,7 +1070,7 @@ def split_edge_at_points(edge, points, tolerance=1e-9):
 
     Args:
         edge ([type]): [description]
-        points ([type]): [description]
+        points (pygeos.geometry): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
@@ -1107,7 +1081,7 @@ def split_edge_at_points(edge, points, tolerance=1e-9):
     except ValueError:
         # if splitting fails, e.g. becuase points is empty GeometryCollection
         segments = [edge.geometry]
-    edges = GeoDataFrame([edge] * len(segments))
+    edges = DataFrame([edge] * len(segments))
     edges.geometry = segments
     return edges
 
@@ -1115,8 +1089,8 @@ def split_line(line, points, tolerance=1e-9):
     """Split line at point or multipoint, within some tolerance
 
     Args:
-        line ([type]): [description]
-        points ([type]): [description]
+        line (pygeos.geometry): [description]
+        points (pygeos.geometry): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
@@ -1129,8 +1103,8 @@ def snap_line(line, points, tolerance=1e-9):
     """Snap a line to points within tolerance, inserting vertices as necessary
 
     Args:
-        line ([type]): [description]
-        points ([type]): [description]
+        line (pygeos.geometry): [description]
+        points (pygeos.geometry): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
@@ -1149,8 +1123,8 @@ def nearest_point_on_line(point, line):
     """Return the nearest point on a line
 
     Args:
-        point ([type]): [description]
-        line ([type]): [description]
+        point (pygeos.geometry): [description]
+        line (pygeos.geometry): [description]
 
     Returns:
         [type]: [description]
@@ -1161,7 +1135,7 @@ def set_precision(geom, precision):
     """Set geometry precision
 
     Args:
-        geom ([type]): [description]
+        geom (pygeos.geometry): [description]
         precision ([type]): [description]
 
     Returns:
@@ -1176,7 +1150,7 @@ def reset_ids(network):
     using dict masking
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
 
     Returns:
         [type]: [description]
@@ -1209,7 +1183,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
 
     Args:
-        network ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
@@ -1252,16 +1226,16 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     )
 
 #returns a geopandas dataframe of a simplified network
-def simplify_network_from_gdf(gdf):
-    net = Network(edges=gdf)
+def simplify_network_from_df(df):
+    net = Network(edges=df)
     net = clean_roundabouts(net)
     net = split_edges_at_nodes(net)
     net = add_endpoints(net)
     net = add_ids(net)
     net = add_topology(net)    
     net = drop_hanging_nodes(net)    
-    net = merge_2(net)
-    net =reset_ids(net) 
+    net = merge_edges(net)
+    net = reset_ids(net) 
     net = add_distances(net)
     net = merge_all_multi(net)
     logicCheck(net)
@@ -1269,9 +1243,7 @@ def simplify_network_from_gdf(gdf):
     net = add_travel_time(net)     
     return net
 
-
-
-def add_modal(gdf,alter_transport,threshold=0.02):
+def add_modal(network,alter_transport,threshold=0.02):
     """
     Designed with the addition of ferries in mind, to snap eligible routes onto existing network
     with special logic for loading unloading, left after other methods to protect from merge
@@ -1281,15 +1253,16 @@ def add_modal(gdf,alter_transport,threshold=0.02):
     ferries will have their own time calculation method 
 
     Args:
-        gdf ([type]): [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
         alter_transport ([type]): [description]
         threshold (float, optional): [description]. Defaults to 0.02.
 
     Returns:
-        [type]: [description]
+        network (class): A network composed of nodes (points in space) and edges (lines)
+
     """    
-    edges = gdf.edges.copy()
-    nodes = gdf.nodes.copy()
+    edges = network.edges.copy()
+    nodes = network.nodes.copy()
     node_degree = nodes.degree.to_numpy()
     sindex_nodes = pygeos.STRtree(nodes['geometry'])
     sindex_edges = pygeos.STRtree(edges['geometry'])
@@ -1349,7 +1322,6 @@ def add_modal(gdf,alter_transport,threshold=0.02):
     edges = edges.append(new_edges,ignore_index=True)
     edges.reset_index(inplace=True)
     return Network(edges = edges, nodes=nodes)
-        
 
 def logicCheck(net):
     nodes = net.nodes.copy()
@@ -1419,8 +1391,8 @@ def quickFix(net):
     return Network(edges=edges,nodes=net.nodes)
 
 #Creates an igraph from geodataframe with the distances as weights. 
-def igraph_from_gdf(gdf):
-    net = simplify_network_from_gdf(gdf)
+def igraph_from_df(df):
+    net = simplify_network_from_df(df)
     g = ig.Graph.TupleList(net.edges[['from_id','to_id','distance']].itertuples(index=False))
     #layout = g.layout("kk")
     #ig.plot(g, layout=layout)
