@@ -18,10 +18,10 @@ from numpy.ma import masked
 
 
 def metrics(graph):
-    """[summary]
+    """This method prints some basic network metrics of an iGraph
 
     Args:
-        graph ([type]): [description]
+        graph (iGraph.Graph object): 
     """    
     g = graph
     print("Number of edges: ", g.ecount())
@@ -37,44 +37,36 @@ def metrics(graph):
     print("Total Edge length ", np.sum(g.es['distance']))
     convert_nx(g)
 
-def show(graph):
-    """[summary]
 
-    Args:
-        graph ([type]): [description]
-    """    
-    g = graph
-    layout = g.layout("kk")
-    ig.plot(g, layout=layout)
 
 #Creates a graph 
 def graph_load(edges):
-    """[summary]
+    """Creates 
 
     Args:
-        edges ([type]): [description]
+        edges (pandas.DataFrame) : containing road network edges, with from and to ids, and distance / time columns
 
     Returns:
-        [type]: [description]
+        igraph.Graph (object) : a graph with distance and time attributes
     """    
     #return ig.Graph.TupleList(gdfNet.edges[['from_id','to_id','distance']].itertuples(index=False),edge_attrs=['distance'])
-    g = ig.Graph(directed=False)
+    graph = ig.Graph(directed=False)
     max_node_id = max(max(edges.from_id),max(edges.to_id))
-    g.add_vertices(max_node_id+1)
-    zippy = zip(edges.from_id,edges.to_id)
-    g.add_edges(zippy)
-    g.es['distance'] = edges.distance
-    g.es['time'] = edges.time
-    return g
+    graph.add_vertices(max_node_id+1)
+    edge_tuples = zip(edges.from_id,edges.to_id)
+    graph.add_edges(edge_tuples)
+    graph.es['distance'] = edges.distance
+    graph.es['time'] = edges.time
+    return graph
     
-def graph_load_largest(gdfNet):
-    """[summary]
+def graph_load_largest(edges):
+    """Returns the largest component of a graph given an edge dataframe
 
     Args:
-        gdfNet ([type]): [description]
+        edges (pandas.DataFrame): A dataframe containing from, to ids; time and distance attributes for each edge
 
     Returns:
-        [type]: [description]
+        igraph.Graph (object) : a graph with distance and time attributes
     """    
     graph = graph_load(gdfNet)
     return graph.clusters().giant()
@@ -82,27 +74,27 @@ def graph_load_largest(gdfNet):
 
 def largest_component_df(edges,nodes):
     """Returns the largest component of a network object (network.edges pd  
-    and network.nodes pd) with reset ids
+    and network.nodes pd) with reset ids. Uses igraphs built in function, while adding ids as attributes
 
     Args:
-        edges ([type]): [description]
-        nodes ([type]): [description]
+        edges (pandas.DataFrame): A dataframe containing from and to ids
+        nodes (pandas.DataFrame): A dataframe containing node ids
 
     Returns:
-        [type]: [description]
+        edges, nodes (pandas.DataFrame) : 2 dataframes containing only those edges and nodes belonging to the giant component
     """    
     edges = edges
     nodes = nodes
-    zippy = zip(edges['from_id'],edges['to_id'])
-    g = ig.Graph(directed=False)
-    g.add_vertices(len(nodes))
-    g.vs['id'] = nodes['id']
-    g.add_edges(zippy)
-    g.es['id'] = edges['id']
-    g = g.clusters().giant()
-    a = edges.loc[edges.id.isin(g.es()['id'])]
-    b = nodes.loc[nodes.id.isin(g.vs()['id'])]
-    return reset_ids(a,b)
+    edge_tuples = zip(edges['from_id'],edges['to_id'])
+    graph = ig.Graph(directed=False)
+    graph.add_vertices(len(nodes))
+    graph.vs['id'] = nodes['id']
+    graph.add_edges(edge_tuples)
+    graph.es['id'] = edges['id']
+    graph = graph.clusters().giant()
+    edges_giant = edges.loc[edges.id.isin(graph.es()['id'])]
+    nodes_giant = nodes.loc[nodes.id.isin(graph.vs()['id'])]
+    return reset_ids(edges_giant,nodes_giant)
 
 
 def create_demand(OD_nodes, OD_orig, node_pop):
@@ -113,12 +105,12 @@ def create_demand(OD_nodes, OD_orig, node_pop):
     -p is set to 1, populations represent the grid square of the origin, 
 
     Args:
-        OD_nodes ([type]): a list of nodes to use for the OD, a,b
-        OD_orig ([type]): A shortest path matrix used for the distance calculation
-        node_pop ([type]): population per OD node
+        OD_nodes (list): a list of nodes to use for the OD, a,b
+        OD_orig (np.matrix): A shortest path matrix used for the distance calculation
+        node_pop (list): population per OD node
 
     Returns:
-        [type]: [description]
+        demand (np.ndarray) : A matrix with demand calculations for each OD pair
     """    
     demand = np.zeros((len(OD_nodes), len(OD_nodes)))
 
@@ -137,45 +129,43 @@ def create_demand(OD_nodes, OD_orig, node_pop):
     demand = np.ceil(demand).astype(int)
     return demand
 
-#Chooses nodes for OD matrix according to their population size stochastically
 def choose_OD(pos_OD, OD_no):
-    """[summary]
+    """Chooses nodes for OD matrix according to their population size stochastically and probabilistically 
 
     Args:
-        pos_OD ([type]): [description]
-        OD_no ([type]): [description]
+        pos_OD (list): a list of tuples representing the nodes and their population
+        OD_no (int): Number of OD pairs to create
 
     Returns:
-        [type]: [description]
+        OD_nodes [list]: The nodes chosen for the OD
+        mapped_pops [list]: Population for nodes chosen
     """    
-    #print(pos_OD)
+
+    #creates 2 tuples of the node ids and their total representative population
     node_ids, tot_pops = zip(*pos_OD)
+    #Assigns a probability by population size
     pop_probs = [x/sum(tot_pops) for x in tot_pops]
     #OD nodes chosen
     OD_nodes = list(np.random.choice(node_ids, size=OD_no, replace = False, p=pop_probs))
-    #print(OD_nodes)
     #Population counts in a mapped list
     node_positions = [node_ids.index(i) for i in OD_nodes]
-    #print(node_positions)
     mapped_pops = [tot_pops[j] for j in node_positions]
-    #print(mapped_pops)
     #returns the nodes, and their populations, should this be zipped?
     return OD_nodes, mapped_pops
 
 
-#Returns an array of tuples, with the first value the node ID to consider, and the
-#second value the total population associated with this node
-#The tolerance is the size of the bounding box to search for nodes within
-def prepare_pos_OD(gridDF, nodes, tolerance = 0.1):
-    """[summary]
+def prepare_possible_OD(gridDF, nodes, tolerance = 0.1):
+    """Returns an array of tuples, with the first value the node ID to consider, and the
+       second value the total population associated with this node. 
+       The tolerance is the size of the bounding box to search for nodes within
 
     Args:
-        gridDF ([type]): [description]
-        nodes ([type]): [description]
-        tolerance (float, optional): [description]. Defaults to 0.1.
+        gridDF (pandas.DataFrame): A dataframe with the grid centroids and their population
+        nodes (pandas.DataFrame): A dataframe of the road network nodes
+        tolerance (float, optional): size of the bounding box . Defaults to 0.1.
 
     Returns:
-        [type]: [description]
+        final_possible_pop (list): a list of tuples representing the nodes and their population
     """    
     nodeIDs = []
     sindex = pyg.STRtree(nodes['geometry'])
@@ -184,33 +174,35 @@ def prepare_pos_OD(gridDF, nodes, tolerance = 0.1):
     pos_tot_pop = []
     for i in gridDF.itertuples():
         ID = nearest(i.geometry, nodes, sindex, tolerance)
+        #If a node was found
         if ID > -1: 
             pos_OD_nodes.append(ID)
             pos_tot_pop.append(i.tot_pop)
     a = nodes.loc[nodes.id.isin(pos_OD_nodes)]
-    with Geopackage('nodyALB.gpkg', 'w') as out:
-        out.add_layer(a, name='finanod', crs='EPSG:4326')
+    #Create a geopackage of the possible ODs
+    #with Geopackage('nodyBGR.gpkg', 'w') as out:
+    #    out.add_layer(a, name='finanod', crs='EPSG:4326')
     nodes = np.array([pos_OD_nodes])
     node_unique = np.unique(nodes)
     count = np.array([pos_tot_pop])
     
     #List comprehension to add total populations of recurring nodes 
-    final_pos_pop = [(i, count[nodes==i].sum()) for i in node_unique]
-    return final_pos_pop
+    final_possible_pop = [(i, count[nodes==i].sum()) for i in node_unique]
+    return final_possible_pop
 
 #WOULD IT BE BETTER TO USE HALF THE MINIMUM DISTANCE BETWEEN GRID POINTS AS THE TOLERANCE INSTEAD
 
 def nearest(geom, gdf,sindex, tolerance):
-    """[summary]
+    """Finds the nearest node
 
     Args:
-        geom ([type]): [description]
-        gdf ([type]): [description]
-        sindex ([type]): [description]
-        tolerance ([type]): [description]
+        geom (pygeos.Geometry) : Geometry to find nearest
+        gdf (pandas.index): Node dataframe to provide possible nodes
+        sindex (pygeos.Sindex): Spatial index for faster lookup
+        tolerance (float): Size of buffer to use to find nodes
 
     Returns:
-        [type]: [description]
+        nearest_geom.id [int]: The node id that is closest to the geom
     """    
     matches_idx = sindex.query(geom)
     if not matches_idx.any():
@@ -227,21 +219,21 @@ def nearest(geom, gdf,sindex, tolerance):
     return nearest_geom.id
 
 
-def perc_Final(edges, del_frac, OD_list=[], pop_list=[], GDP_per_capita=50000):
-    """[summary]
+def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_capita=50000):
+    """Final version of percolation, runs a simulation on the network provided, to give an indication of network resilience.
 
     Args:
-        edges ([type]): [description]
-        del_frac ([type]): [description]
-        OD_list (list, optional): [description]. Defaults to [].
-        pop_list (list, optional): [description]. Defaults to [].
-        GDP_per_capita (int, optional): [description]. Defaults to 50000.
+        edges (pandas.DataFrame): A dataframe containing edge information: the nodes to and from, the time and distance of the edge
+        del_frac (float): The fraction to increment the percolation. Defaults to 0.01. e.g.0.01 removes 1 percent of edges at each step
+        OD_list (list, optional): OD nodes to use for matrix and calculations.  Defaults to []. 
+        pop_list (list, optional): Corresponding population sizes for ODs for demand calculations. Defaults to [].
+        GDP_per_capita (int, optional): The GDP of the country/area for surplus cost calculations. Defaults to 50000.
 
     Returns:
-        [type]: [description]
-    """    
+        result_df [pandas.DataFrame]: The results! 'frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'    """    
     result_df = []
     g = graph_load(edges)
+    #These if statements allow for an OD and population list to be randomly generated
     if OD_list == []: OD_nodes = random.sample(range(g.vcount()-1),100)
     else: OD_nodes = OD_list
     edge_no = g.ecount() 
@@ -250,14 +242,12 @@ def perc_Final(edges, del_frac, OD_list=[], pop_list=[], GDP_per_capita=50000):
     if pop_list == []: node_pop = random.sample(range(4000), OD_node_no)
     else: node_pop = pop_list
 
-
+    #Creates a matrix of shortest path times between OD nodes
     base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
-    #print(base_shortest_paths)
     OD_orig = np.matrix(base_shortest_paths)
     OD_thresh = OD_orig * 10
     
     demand = create_demand(OD_nodes, OD_orig, node_pop)
-    #rint(demand)
 
     exp_g = g.copy()
     trips_possible = True
@@ -267,7 +257,7 @@ def perc_Final(edges, del_frac, OD_list=[], pop_list=[], GDP_per_capita=50000):
 
     while trips_possible:
         exp_edge_no = exp_g.ecount()
-
+        #The number of edges to delete
         no_edge_del = math.floor(del_frac * edge_no)
         try:
             edges_del = random.sample(range(exp_edge_no),no_edge_del)
@@ -276,21 +266,22 @@ def perc_Final(edges, del_frac, OD_list=[], pop_list=[], GDP_per_capita=50000):
             edges_del = range(exp_edge_no)
         exp_g.delete_edges(edges_del)
         frac_counter += del_frac
-        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
+        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
         perc_matrix = np.matrix(new_shortest_paths)
         results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3))  
         result_df.append(results)
         
-        
+        #If the frac_counter goes past 0.99
         if results[0] >= 0.99: break
+        #If there are no edges left to remove
         if exp_edge_no < 1: break
-        #if counter==4: break
+
     result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'])
     return result_df
 
 
 def simple_OD_calc(OD, comparisonOD,pos_trip_no):
-    """[summary]
+    """An alternative OD calculation that counts how many trips exceed threshold length
 
     Args:
         OD ([type]): [description]
@@ -306,18 +297,18 @@ def simple_OD_calc(OD, comparisonOD,pos_trip_no):
     
 def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
     """Function returns the % of total trips between origins and destinations that exceed fail value
-
+       Almost verbatim from world bank /GOSTnets world_files_criticality_v2.py
 
     Args:
-        OD ([type]): [description]
-        fail_value ([type]): [description]
-        demand ([type]): [description]
-        baseline ([type]): [description]
-        GDP_per_capita ([type]): [description]
-        frac_counter ([type]): [description]
+        OD (np.matrix): Current OD matrix times (during percolation)
+        fail_value (int): Came form GOSTNETS , seems just to be a huge int
+        demand (np.ndarray): Demand matrix
+        baseline (np.matrix): OD matrix before percolation
+        GDP_per_capita (int): GDP of relevant area
+        frac_counter (float): Keeps track of current fraction for ease of results storage
 
     Returns:
-        [type]: [description]
+        frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
     """
     ans = []
 
@@ -355,8 +346,8 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
         return ((m_demand.sum()) / (demand.sum()))
 
     pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
-    pct_twice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
-    pct_thrice_plus = PctDisrupt(3, frac_OD, potentially_disrupted_trips)
+    pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
+    pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
 
     # Flexing demand with trip cost
     def surplus_loss(e, C2, C1, D1):
@@ -397,6 +388,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, masked_demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, masked_demand)
 
+    #Masked values are not friendly to later pandas manipulation, only use for quick visualisation
     if pct_isolated is masked: pct_isolated = 0
     if pct_thirty_plus is masked: pct_thirty_plus = 0
     if pct_twice_plus is masked: pct_twice_plus = 0
@@ -410,11 +402,11 @@ def reset_ids(edges, nodes):
     the references in edge table using dict masking
 
     Args:
-        edges ([type]): [description]
-        nodes ([type]): [description]
+        edges (pandas.DataFrame): edges to re-reference ids
+        nodes (pandas.DataFrame): nodes to re-reference ids
 
     Returns:
-        [type]: [description]
+        edges, nodes (pandas.DataFrame) : The re-referenced edges and nodes.
     """    
     nodes = nodes.copy()
     edges = edges.copy()
@@ -439,6 +431,13 @@ def reset_ids(edges, nodes):
     edges.reset_index(drop=True,inplace=True)
     nodes.reset_index(drop=True,inplace=True)
     return edges,nodes
+
+
+
+
+#
+#       LEGACY METHODS
+#
 
 #Del frac is now a fraction of total edge length rather than of number of edges
 def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
@@ -514,61 +513,16 @@ def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
         frac_inc += del_frac
 
     return x_ax,isolated_trip_results
-    
-'''
-    for frac in intervals:
-        no_edge_del = math.floor(frac * edge_no)
-        edges_del = random.sample(range(edge_no),no_edge_del)
-        g.delete_edges(edges_del)
-        for e in g.es:
-            print(e)
-        print(edges_del)
-        showMore(g)
-        print(frac)
-        print(no_edge_del)
-'''
-def alt(edges, isolated_threshold=3, OD_no = 100, del_frac=0.02):
-    """[summary]
+
+def show(graph):
+    """Simple 
 
     Args:
-        edges ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 3.
-        OD_no (int, optional): [description]. Defaults to 100.
-        del_frac (float, optional): [description]. Defaults to 0.02.
-
-    Returns:
-        [type]: [description]
+        graph ([type]): [description]
     """    
-    g = ig.Graph(directed=False)
-    max_node_id = max(max(edges.from_id),max(edges.to_id))
-    g.add_vertices(max_node_id+1)
-    zippy = zip(edges.from_id,edges.to_id)
-    g.add_edges(zippy)
-    g.es['distance'] = edges.distance
-    randomOD = random.sample(range(g.vcount()-1),OD_no)
-    return percolation(g,randomOD,del_frac, isolated_threshold)
-
-def edge_to_perc(edges, isolated_threshold = 3, OD_no=100, del_frac=0.02):
-    """[summary]
-
-    Args:
-        edges ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 3.
-        OD_no (int, optional): [description]. Defaults to 100.
-        del_frac (float, optional): [description]. Defaults to 0.02.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = ig.Graph(directed=False)
-    max_node_id = max(max(edges.from_id),max(edges.to_id))
-    g.add_vertices(max_node_id+1)
-    zippy = zip(edges.from_id,edges.to_id)
-    g.add_edges(zippy)
-    g.es['distance'] = edges.distance
-    randomOD = random.sample(range(g.vcount()-1),OD_no)
-    return percolation_by_length(g,randomOD,del_frac, isolated_threshold)
-
+    g = graph
+    layout = g.layout("kk")
+    ig.plot(g, layout=layout)
 
 def convert_nx(graph):
     """[summary]
@@ -602,84 +556,6 @@ def graph_example():
     del_frac = 0.2
     percolation_by_length(g, OD_nodes,del_frac)
 
-
-def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
-    """[summary]
-
-    Args:
-        graph ([type]): [description]
-        OD_nodes ([type]): [description]
-        del_frac ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 2.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = graph
- 
-    interval_no = 2
-    edge_no = g.ecount() #10
-    OD_node_no = len(OD_nodes)
-    print("Number of Edges: ",edge_no)
-    intervals = np.arange(0.01,1,0.2)
-
-    base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-    OD_orig = np.matrix(base_shortest_paths)
-    #print(OD_orig)
-    isolated_threshold = isolated_threshold
-    #If the graph is fully connnected this is the number of possible trips
-    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
-    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
-    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
-    #consider passing a fully connected graph or ensure OD are part of giant component
-    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
-    pos_trip_no = theo_pos_trip_no - imp_trips
-    #print(pos_trip_no)
-    
-    OD_thresh = OD_orig*isolated_threshold
-    del_frac = del_frac
-    exp_g = g.copy()
-    #print(OD_thresh)
-    trips_possible = True
-    counter = 0
-    counterMax = 1/del_frac
-    #showMore(exp_g)
-    isolated_trip_results = [0]
-    while trips_possible:
-        exp_edge_no = exp_g.ecount()
-        no_edge_del = math.floor(del_frac * edge_no)
-        try:
-            edges_del = random.sample(range(exp_edge_no),no_edge_del)
-        except:
-            print("random sample playing up but its ok")
-            edges_del = range(exp_edge_no)
-        exp_g.delete_edges(edges_del)
-        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-        perc_matrix = np.matrix(new_shortest_paths)
-        result = simple_OD_calc(perc_matrix, OD_thresh, pos_trip_no)    
-        isolated_trip_results.append(result)
-        if result >= 1: break
- 
-        #showMore(exp_g)
-        counter += 1
-        if counter > counterMax: break
-    
-    x_ax = []
-    frac_inc = 0
-    for i in isolated_trip_results:
-        x_ax.append(frac_inc)
-        frac_inc += del_frac
-
-    return x_ax,isolated_trip_results
-'''
-    plt.plot(x_ax,isolated_trip_results)
-    plt.ylabel("Isolated Trips")
-    plt.title("Simple percolation")
-    plt.xlabel("Percentage of edges destroyed")
-    plt.show()
-    print(isolated_trip_results)
-'''
-    
 #https://plotly.com/python/v3/igraph-networkx-comparison/
 def showMore(graph):
     """[summary]
@@ -756,6 +632,134 @@ def showMore(graph):
     data=[trace1, trace2]
     fig=Figure(data=data, layout=layout)
     py.iplot(fig, filename='network-igraph')
+    
+'''
+LEGACY METHODS, MAY BE DELETED SOON
+def alt(edges, isolated_threshold=3, OD_no = 100, del_frac=0.02):
+    """[summary]
+
+    Args:
+        edges ([type]): [description]
+        isolated_threshold (int, optional): [description]. Defaults to 3.
+        OD_no (int, optional): [description]. Defaults to 100.
+        del_frac (float, optional): [description]. Defaults to 0.02.
+
+    Returns:
+        [type]: [description]
+    """    
+    g = ig.Graph(directed=False)
+    max_node_id = max(max(edges.from_id),max(edges.to_id))
+    g.add_vertices(max_node_id+1)
+    zippy = zip(edges.from_id,edges.to_id)
+    g.add_edges(zippy)
+    g.es['distance'] = edges.distance
+    randomOD = random.sample(range(g.vcount()-1),OD_no)
+    return percolation(g,randomOD,del_frac, isolated_threshold)
+
+def edge_to_perc(edges, isolated_threshold = 3, OD_no=100, del_frac=0.02):
+    """[summary]
+
+    Args:
+        edges ([type]): [description]
+        isolated_threshold (int, optional): [description]. Defaults to 3.
+        OD_no (int, optional): [description]. Defaults to 100.
+        del_frac (float, optional): [description]. Defaults to 0.02.
+
+    Returns:
+        [type]: [description]
+    """    
+    g = ig.Graph(directed=False)
+    max_node_id = max(max(edges.from_id),max(edges.to_id))
+    g.add_vertices(max_node_id+1)
+    zippy = zip(edges.from_id,edges.to_id)
+    g.add_edges(zippy)
+    g.es['distance'] = edges.distance
+    randomOD = random.sample(range(g.vcount()-1),OD_no)
+    return percolation_by_length(g,randomOD,del_frac, isolated_threshold)
+
+
+
+
+
+
+def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
+    """[summary]
+
+    Args:
+        graph ([type]): [description]
+        OD_nodes ([type]): [description]
+        del_frac ([type]): [description]
+        isolated_threshold (int, optional): [description]. Defaults to 2.
+
+    Returns:
+        [type]: [description]
+    """    
+    g = graph
+ 
+    interval_no = 2
+    edge_no = g.ecount() #10
+    OD_node_no = len(OD_nodes)
+    print("Number of Edges: ",edge_no)
+    intervals = np.arange(0.01,1,0.2)
+
+    base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
+    OD_orig = np.matrix(base_shortest_paths)
+    #print(OD_orig)
+    isolated_threshold = isolated_threshold
+    #If the graph is fully connnected this is the number of possible trips
+    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
+    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
+    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
+    #consider passing a fully connected graph or ensure OD are part of giant component
+    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
+    pos_trip_no = theo_pos_trip_no - imp_trips
+    #print(pos_trip_no)
+    
+    OD_thresh = OD_orig*isolated_threshold
+    del_frac = del_frac
+    exp_g = g.copy()
+    #print(OD_thresh)
+    trips_possible = True
+    counter = 0
+    counterMax = 1/del_frac
+    #showMore(exp_g)
+    isolated_trip_results = [0]
+    while trips_possible:
+        exp_edge_no = exp_g.ecount()
+        no_edge_del = math.floor(del_frac * edge_no)
+        try:
+            edges_del = random.sample(range(exp_edge_no),no_edge_del)
+        except:
+            print("random sample playing up but its ok")
+            edges_del = range(exp_edge_no)
+        exp_g.delete_edges(edges_del)
+        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
+        perc_matrix = np.matrix(new_shortest_paths)
+        result = simple_OD_calc(perc_matrix, OD_thresh, pos_trip_no)    
+        isolated_trip_results.append(result)
+        if result >= 1: break
+ 
+        #showMore(exp_g)
+        counter += 1
+        if counter > counterMax: break
+    
+    x_ax = []
+    frac_inc = 0
+    for i in isolated_trip_results:
+        x_ax.append(frac_inc)
+        frac_inc += del_frac
+
+    return x_ax,isolated_trip_results
+
+    plt.plot(x_ax,isolated_trip_results)
+    plt.ylabel("Isolated Trips")
+    plt.title("Simple percolation")
+    plt.xlabel("Percentage of edges destroyed")
+    plt.show()
+    print(isolated_trip_results)
+'''
+    
+
 
 
 
