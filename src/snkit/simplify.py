@@ -451,7 +451,7 @@ def clean_roundabouts(network):
     new_edge = []
     remove_edge=[]
     new_edge_id = []
-
+    attributes = [x for x in network.edges.columns if x not in ['geometry','osm_id']]
 
     roundabouts = find_roundabouts(network)
     testy = []
@@ -494,23 +494,23 @@ def clean_roundabouts(network):
                         break
                     counter += 1
                 double_edge = new_edge.pop(a)
-                start = pygeom.get_point(double_edge[2],0)
-                end = pygeom.get_point(double_edge[2],-1)
+                start = pygeom.get_point(double_edge[-1],0)
+                end = pygeom.get_point(double_edge[-1],-1)
                 first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
-                co_ords = pygeos.coordinates.get_coordinates(double_edge[2])
+                co_ords = pygeos.coordinates.get_coordinates(double_edge[-1])
                 if first_co_is_closer: 
                     new_co = np.concatenate((centroid_co,co_ords))
                 else:
                     new_co = np.concatenate((co_ords,centroid_co))
                 snap_line = pygeos.linestrings(new_co)
-                new_edge.append([edge.osm_id, edge.highway, snap_line])
+                new_edge.append([edge.osm_id]+list(edge[list(attributes)])+[snap_line])
 
             else:
-                new_edge.append([edge.osm_id, edge.highway, snap_line])
+                new_edge.append([edge.osm_id]+list(edge[list(attributes)])+[snap_line])
                 new_edge_id.append(edge.osm_id)
             remove_edge.append(e[0])
 
-    new = pd.DataFrame(new_edge,columns=['osm_id','highway','geometry'])
+    new = pd.DataFrame(new_edge,columns=['osm_id']+attributes+['geometry'])
     dg = network.edges.loc[~network.edges.index.isin(remove_edge)]
     
     ges = pd.concat([dg,new]).reset_index()
@@ -1192,6 +1192,8 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     """    
     sindex_edges = pygeos.STRtree(network.edges['geometry'])
     
+    attributes = [x for x in network.edges.columns if x not in ['index','geometry','osm_id']]
+
     grab_all_edges = []
     new_nodes = []
     for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
@@ -1214,11 +1216,12 @@ def split_edges_at_nodes(network, tolerance=1e-9):
 
         new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
 
-        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge.highway]*len(new_edges)])
+        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge[2:-1]]*len(new_edges)])
 
     # combine all new edges
-    edges = pd.DataFrame([item for sublist in  [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] for item in sublist],
-                         columns=['osm_id','geometry','highway'])
+    edges = pd.DataFrame([[item[0],item[1]]+list(item[2]) for sublist in [list(zip(x[0],x[1],x[2])) 
+                                                                          for x in grab_all_edges] for item in sublist],
+                         columns=['osm_id','geometry']+attributes)
 
     # return new network with split edges
     return Network(
