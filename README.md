@@ -7,7 +7,7 @@
 
 # trails
 
-trails is an offshoot of snKit, first developed by Tom Russell and Elco Koks.
+trails is an offshoot of [snKit](https://github.com/tomalrussell/snkit), first developed by Tom Russell and Elco Koks.
 
 ## Acknowledgements
 
