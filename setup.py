@@ -17,15 +17,15 @@ def readme():
 
 
 setup(
-    name='snkit',
+    name='trails',
     use_scm_version=True,
     license='MIT License',
-    description='a spatial networks toolkit',
+    description='A Python toolkit for trade and Transport impact and fLow analysis',
     long_description=readme(),
     long_description_content_type="text/markdown",
-    author='Tom Russell',
-    author_email='tomalrussell@gmail.com',
-    url='https://github.com/tomalrussell/snkit',
+    author='Ben Dickens, Elco Koks & Tom Russell',
+    author_email='bendickens@zoho.com',
+    url='https://github.com/bendickens/trails',
     packages=find_packages('src'),
     package_dir={'': 'src'},
     py_modules=[splitext(basename(path))[0] for path in glob('src/*.py')],

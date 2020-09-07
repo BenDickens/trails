@@ -1,22 +1,13 @@
-[![Documentation Status]
-[![Build Status]
-[![License]
-[![PyPI version]
-[![DOI]
-
-
 # trails
 
-trails is an offshoot of [snKit](https://github.com/tomalrussell/snkit), first developed by Tom Russell and Elco Koks.
+A Python toolkit for Trade and tRAnsport Impact and fLow analysiS
+
+trails is an offshoot of [snKit](https://github.com/tomalrussell/snkit), first developed by Tom Russell.
 
 ## Acknowledgements
 
 ```
 MIT License
 
-Copyright (c) 2018 Tom Russell and snkit contributors
+Copyright (c) 2020 Ben Dickens, Elco Koks & Tom Russell
 ```
-
-Initial snkit development was at the [Environmental Change Institute, University of
-Oxford](http://www.eci.ox.ac.uk/) within the EPSRC sponsored MISTRAL programme, as part of the
-[Infrastructure Transition Research Consortium](http://www.itrc.org.uk/).
