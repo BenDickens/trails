@@ -128,7 +128,7 @@ def create_grid(bbox,height):
 
     return res_geoms
 
-def get_gdp_values(gdf):
+def get_gdp_values(gdf,data_path):
     """[summary]
 
     Args:
@@ -137,7 +137,7 @@ def get_gdp_values(gdf):
     Returns:
         [type]: [description]
     """    
-    world_pop = os.path.join(r'C:\Data\global_gdp','GDP_2015.tif')
+    world_pop = os.path.join(data_path,'global_gdp','GDP_2015.tif')
     gdf['geometry'] = gdf.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))
     gdp = list(item['sum'] for item in zonal_stats(gdf.geometry,world_pop,
                 stats="sum"))
@@ -145,7 +145,7 @@ def get_gdp_values(gdf):
     gdf['geometry'] = pygeos.from_shapely(gdf.geometry)
     return gdp
 
-def country_grid_gdp_filled(trans_network,country,rough_grid_split=100,from_main_graph=False):
+def country_grid_gdp_filled(trans_network,country,data_path,rough_grid_split=100,from_main_graph=False):
     """[summary]
 
     Args:
@@ -168,7 +168,7 @@ def country_grid_gdp_filled(trans_network,country,rough_grid_split=100,from_main
     gdf_admin = pd.DataFrame(create_grid(create_bbox(node_df),height),columns=['geometry'])
 
      #load data and convert to pygeos
-    country_shape = gpd.read_file('C:\Data\GADM\gadm36_levels.gpkg',layer=0)
+    country_shape = gpd.read_file(os.path.join(data_path,'GADM','gadm36_levels.gpkg'),layer=0)
     country_shape = pd.DataFrame(country_shape.loc[country_shape.GID_0==country])
     country_shape.geometry = pygeos.from_shapely(country_shape.geometry)
 
@@ -177,7 +177,7 @@ def country_grid_gdp_filled(trans_network,country,rough_grid_split=100,from_main
         
     gdf_admin['centroid'] = pygeos.centroid(gdf_admin.geometry)
     gdf_admin['km2'] = area(gdf_admin)
-    gdf_admin['gdp'] = get_gdp_values(gdf_admin)
+    gdf_admin['gdp'] = get_gdp_values(gdf_admin,data_path)
     gdf_admin = gdf_admin.loc[gdf_admin.gdp > 0].reset_index()
     gdf_admin['gdp_area'] = gdf_admin.gdp/gdf_admin['km2']
 
@@ -223,9 +223,9 @@ def area(gdf,km=True):
     else:
         return pygeos.area(convert_crs(gdf)[0])
 
-def get_basetable(country):
+def get_basetable(country,data_path):
     
-    io_data_path = r'C:\Data\country_IO_tables'
+    io_data_path = os.path.join(data_path,'country_IO_tables')
     
     df = pd.read_csv(os.path.join(io_data_path,'IO_{}_2015_BasicPrice.txt'.format(country)), 
                      sep='\t', skiprows=1,header=[0,1,2],index_col = [0,1,2,3],
@@ -234,7 +234,7 @@ def get_basetable(country):
     basetable = df.iloc[:26,:26]
     return basetable.astype(int)
 
-def create_OD(gdf_admin,country_name):
+def create_OD(gdf_admin,country_name,data_path):
     """[summary]
 
     Args:
@@ -249,7 +249,7 @@ def create_OD(gdf_admin,country_name):
     if 'NAME_1' not in gdf_admin.columns:
         gdf_admin['NAME_1'] = ['reg'+str(x) for x in list(gdf_admin.index)]
         
-    get_basetable(country_name).to_csv(os.path.join('..','..','downscale_od','basetable.csv'), 
+    get_basetable(country_name,data_path).to_csv(os.path.join('..','..','downscale_od','basetable.csv'), 
         sep=',',header=False,index=False)
 
     proxy_reg = pd.DataFrame(gdf_admin[['NAME_1','gdp_area']])
@@ -518,7 +518,7 @@ def plot_results(gdf_in):
     gdf_plot = gdf_plot.to_crs(3857)
 
     plt.rcParams['figure.figsize'] = [20, 10]
-    sfig, axes = plt.subplots(1, 2)
+    fig, axes = plt.subplots(1, 2)
 
     for iter_,ax in enumerate(axes.flatten()):
         if iter_ == 0:
@@ -550,11 +550,11 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
     sg = create_graph(transport_network.edges)[0]
     main_graph = pd.DataFrame(list(sg.es['geometry']),columns=['geometry'])
     
-    gdf_admin = country_grid_gdp_filled(main_graph,country,rough_grid_split=100,from_main_graph=True)
+    gdf_admin = country_grid_gdp_filled(main_graph,country,data_path,rough_grid_split=100,from_main_graph=True)
 
     print('NOTE: GDP values extracted')
 
-    OD,OD_dict,sectors,gdf_admin = create_OD(gdf_admin,country)
+    OD,OD_dict,sectors,gdf_admin = create_OD(gdf_admin,country,data_path)
     print('NOTE: OD created')
     
     gdf_out = run_flow_analysis(country,transport_network,gdf_admin,OD_dict)
