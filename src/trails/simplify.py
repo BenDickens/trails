@@ -708,6 +708,7 @@ def merge_edges(network, print_err=False):
     net = network
     nod = net.nodes.copy()
     edg = net.edges.copy()
+    optional_cols = edg.columns.difference(['osm_id','geometry','from_id','to_id','id'])
     edg_sindex = pygeos.STRtree(network.edges.geometry)
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
@@ -798,8 +799,12 @@ def merge_edges(network, print_err=False):
                 edg.at[info_first_edge,'from_id'] = nextNode2
                 edg.at[info_first_edge,'to_id'] = nextNode1
             eIDtoRemove += possibly_delete
+            possibly_delete.append(info_first_edge)
             for x in pos_0_deg:
                 deg[x] = 0
+            mode_edges = edg.loc[edg.id.isin(possibly_delete)]
+            mode_edges_vals = mode_edges[optional_cols].mode().iloc[0].values
+            edg.at[info_first_edge,optional_cols] = mode_edges_vals
         else:
             if print_err: print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
 
