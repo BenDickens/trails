@@ -735,7 +735,7 @@ def merge_edges(network, print_err=False):
         #deg[nodeID]= 0
         #Co-ordinates of current node
         node_geometry = nodGeom[nodeID]
-        eID = set(edg_sindex.query(nodGeom[nodeID],predicate='intersects'))
+        eID = set(edg_sindex.query(node_geometry,predicate='intersects'))
         #Find the nearest 2 edges, unless there is an error in the dataframe
         #this will return the connected edges using spatial indexing
         if len(eID) > 2: edgePath1, edgePath2 = find_closest_2_edges(eID,nodeID,edg,node_geometry)
@@ -757,11 +757,12 @@ def merge_edges(network, print_err=False):
         #While the next node along the path is degree 2 keep traversing
         while deg[nextNode1] == 2:
             if nextNode1 in pos_0_deg: break
-            eID = set(edg_sindex.query(nodGeom[nextNode1],predicate='intersects'))
+            nextNode1Geom = nodGeom[nextNode1]
+            eID = set(edg_sindex.query(nextNode1Geom,predicate='intersects'))
             eID.discard(edgePath1.id)
             try:
                 edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
-                key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
+                key= lambda match: pygeos.distance(nextNode1Geom,(match.geometry)))
             except: 
                 continue
             pos_0_deg.append(nextNode1)
@@ -773,11 +774,12 @@ def merge_edges(network, print_err=False):
 
         while deg[nextNode2] == 2:
             if nextNode2 in pos_0_deg: break
-            eID = set(edg_sindex.query(nodGeom[nextNode2],predicate='intersects'))
+            nextNode2Geom = nodGeom[nextNode2]
+            eID = set(edg_sindex.query(nextNode2Geom,predicate='intersects'))
             eID.discard(edgePath2.id)
             try:
                 edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
-                key= lambda match: pygeos.distance(nodGeom[nextNode2],(match.geometry)))
+                key= lambda match: pygeos.distance(nextNode2Geom,(match.geometry)))
             except: continue
             pos_0_deg.append(nextNode2)
             #deg[nextNode2] = 0
