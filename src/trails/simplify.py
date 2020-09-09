@@ -733,7 +733,6 @@ def merge_edges(network, print_err=False):
         pos_0_deg = []
         nodeID = n2.pop()
         pos_0_deg.append(nodeID)
-        #deg[nodeID]= 0
         #Co-ordinates of current node
         node_geometry = nodGeom[nodeID]
         eID = set(edg_sindex.query(node_geometry,predicate='intersects'))
@@ -741,7 +740,6 @@ def merge_edges(network, print_err=False):
         #this will return the connected edges using spatial indexing
         if len(eID) > 2: edgePath1, edgePath2 = find_closest_2_edges(eID,nodeID,edg,node_geometry)
         elif len(eID) < 2: 
-            #print("First set only contains ", len(eID), "edges")#
             continue
         else: 
             edgePath1 = edg.iloc[eID.pop()]
@@ -767,7 +765,6 @@ def merge_edges(network, print_err=False):
             except: 
                 continue
             pos_0_deg.append(nextNode1)
-            #deg[nextNode1] = 0
             n2.discard(nextNode1)
             nextNode1 = edgePath1.to_id if edgePath1.from_id==nextNode1 else edgePath1.from_id
             newEdge.append(edgePath1.geometry)
@@ -783,7 +780,6 @@ def merge_edges(network, print_err=False):
                 key= lambda match: pygeos.distance(nextNode2Geom,(match.geometry)))
             except: continue
             pos_0_deg.append(nextNode2)
-            #deg[nextNode2] = 0
             n2.discard(nextNode2)
             nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
             newEdge.append(edgePath2.geometry)
@@ -803,8 +799,7 @@ def merge_edges(network, print_err=False):
             for x in pos_0_deg:
                 deg[x] = 0
             mode_edges = edg.loc[edg.id.isin(possibly_delete)]
-            mode_edges_vals = mode_edges[optional_cols].mode().iloc[0].values
-            edg.at[info_first_edge,optional_cols] = mode_edges_vals
+            edg.at[info_first_edge,optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
         else:
             if print_err: print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
 
@@ -815,7 +810,6 @@ def merge_edges(network, print_err=False):
 
     #We remove all degree 0 nodes, including those found in dropHanging
     n = nod.loc[nod.degree > 0].reset_index(drop=True)
-    #n=nod.reset_index(drop=True)
     return Network(nodes=n,edges=edg)
 
 def find_closest_2_edges(edgeIDs, nodeID, edges, nodGeometry):
