@@ -789,8 +789,12 @@ def merge_edges(network, print_err=False):
         new_merged_geom = pygeos.line_merge(pygeos.multilinestrings([x for x in newEdge]))
         if pygeom.get_type_id(new_merged_geom) == 1: 
             edg.at[info_first_edge,'geometry'] = new_merged_geom
-            edg.at[info_first_edge,'from_id'] = nextNode1
-            edg.at[info_first_edge,'to_id'] = nextNode2
+            if nodGeom[nextNode1]==pygeom.get_point(new_merged_geom,0):
+                edg.at[info_first_edge,'from_id'] = nextNode1
+                edg.at[info_first_edge,'to_id'] = nextNode2
+            else: 
+                edg.at[info_first_edge,'from_id'] = nextNode2
+                edg.at[info_first_edge,'to_id'] = nextNode1
             eIDtoRemove += possibly_delete
             for x in pos_0_deg:
                 deg[x] = 0
