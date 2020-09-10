@@ -37,8 +37,6 @@ def metrics(graph):
     print("Total Edge length ", np.sum(g.es['distance']))
     convert_nx(g)
 
-
-
 #Creates a graph 
 def graph_load(edges):
     """Creates 

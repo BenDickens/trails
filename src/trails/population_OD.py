@@ -77,45 +77,45 @@ def create_country_OD_points(country):
         [type]: [description]
     """    
     
-        # set paths to data
-        world_pop = 'C:\Data\worldpop\ppp_2018_1km_Aggregated.tif'
-                
-        #get country ID
-        GID_0 = country['GID_0']
-        print('{} started!'.format(GID_0))
-        
-        #create dataframe of country row
-        df = pd.DataFrame(country).T
-        df.geometry = pygeos.from_wkb(df.geometry.values[0])
-        #specify height of cell in the grid and create grid of bbox
-        height = numpy.sqrt(pygeos.area(df.geometry)/100).values[0]
-        grid = pd.DataFrame(create_grid(create_bbox(df),height),columns=['geometry'])
+    # set paths to data
+    world_pop = 'C:\Data\worldpop\ppp_2018_1km_Aggregated.tif'
+            
+    #get country ID
+    GID_0 = country['GID_0']
+    print('{} started!'.format(GID_0))
+    
+    #create dataframe of country row
+    df = pd.DataFrame(country).T
+    df.geometry = pygeos.from_wkb(df.geometry.values[0])
+    #specify height of cell in the grid and create grid of bbox
+    height = numpy.sqrt(pygeos.area(df.geometry)/100).values[0]
+    grid = pd.DataFrame(create_grid(create_bbox(df),height),columns=['geometry'])
 
-        #clip grid of bbox to grid of the actual spatial exterior of the country
-        clip_grid = pygeos.intersection(grid,df.geometry)
-        clip_grid = clip_grid.loc[~pygeos.is_empty(clip_grid.geometry)]
+    #clip grid of bbox to grid of the actual spatial exterior of the country
+    clip_grid = pygeos.intersection(grid,df.geometry)
+    clip_grid = clip_grid.loc[~pygeos.is_empty(clip_grid.geometry)]
 
-        # turn to shapely geometries again for zonal stats
-        clip_grid.geometry = pygeos.to_wkb(clip_grid.geometry)
-        clip_grid.geometry = clip_grid.geometry.apply(loads)
-        clip_grid = gpd.GeoDataFrame(clip_grid)
+    # turn to shapely geometries again for zonal stats
+    clip_grid.geometry = pygeos.to_wkb(clip_grid.geometry)
+    clip_grid.geometry = clip_grid.geometry.apply(loads)
+    clip_grid = gpd.GeoDataFrame(clip_grid)
 
-        # get total population per grid cell
-        clip_grid['tot_pop'] = clip_grid.geometry.apply(lambda x: zonal_stats(x,world_pop,stats="sum"))
-        clip_grid['tot_pop'] = clip_grid['tot_pop'].apply(lambda x: x[0]['sum'])    
+    # get total population per grid cell
+    clip_grid['tot_pop'] = clip_grid.geometry.apply(lambda x: zonal_stats(x,world_pop,stats="sum"))
+    clip_grid['tot_pop'] = clip_grid['tot_pop'].apply(lambda x: x[0]['sum'])    
 
-        # remove cells in the grid that have no population data
-        clip_grid = clip_grid.loc[~pd.isna(clip_grid.tot_pop)]
-        clip_grid = clip_grid.loc[clip_grid.tot_pop > 100]
-        clip_grid.reset_index(inplace=True,drop=True)
-        clip_grid.geometry = clip_grid.geometry.centroid
-        clip_grid['GID_0'] = GID_0
-        
-        print('{} finished!'.format(GID_0))
-        
-        clip_grid.to_csv(os.path.join('..','country_OD_points','{}.csv'.format(GID_0)))
-        # return the country 
-        return clip_grid 
+    # remove cells in the grid that have no population data
+    clip_grid = clip_grid.loc[~pd.isna(clip_grid.tot_pop)]
+    clip_grid = clip_grid.loc[clip_grid.tot_pop > 100]
+    clip_grid.reset_index(inplace=True,drop=True)
+    clip_grid.geometry = clip_grid.geometry.centroid
+    clip_grid['GID_0'] = GID_0
+    
+    print('{} finished!'.format(GID_0))
+    
+    clip_grid.to_csv(os.path.join('..','country_OD_points','{}.csv'.format(GID_0)))
+    # return the country 
+    return clip_grid 
 
 def create_OD_points():
     """[summary]

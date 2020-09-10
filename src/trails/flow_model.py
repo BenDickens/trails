@@ -24,6 +24,7 @@ data_path = os.path.join('..','data')
 
 from simplify import *
 from extract import railway,ferries,mainRoads,roads
+from population_OD import create_bbox,create_grid
 
 pd.options.mode.chained_assignment = None  
 
@@ -66,71 +67,31 @@ def load_network(osm_path,mainroad=True):
     net = reset_ids(net) 
     net = add_distances(net)
     net = merge_multilinestrings(net)
+    net = fill_attributes(net)
     net = add_travel_time(net)   
 
     return net
 
-def create_bbox(df):
-    """[summary]
-
-    Args:
-        df ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """    
-    """Create bbox around dataframe
-    Arguments:
-
-    Returns:
-
-    """
-    return pygeos.creation.box(pygeos.total_bounds(df.geometry)[0],
-                                  pygeos.total_bounds(df.geometry)[1],
-                                  pygeos.total_bounds(df.geometry)[2],
-                                  pygeos.total_bounds(df.geometry)[3])
-
-def create_grid(bbox,height):
-    """[summary]
-
-    Args:
-        bbox ([type]): [description]
-        height ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """    
+def make_directed(edges):
     
-    # set xmin,ymin,xmax,and ymax of the grid
-    xmin, ymin = pygeos.total_bounds(bbox)[0],pygeos.total_bounds(bbox)[1]
-    xmax, ymax = pygeos.total_bounds(bbox)[2],pygeos.total_bounds(bbox)[3]
-    
-    #estimate total rows and columns
-    rows = int(np.ceil((ymax-ymin) / height))
-    cols = int(np.ceil((xmax-xmin) / height))
-
-    # set corner points
-    x_left_origin = xmin
-    x_right_origin = xmin + height
-    y_top_origin = ymax
-    y_bottom_origin = ymax - height
-
-    # create actual grid
-    res_geoms = []
-    for countcols in range(cols):
-        y_top = y_top_origin
-        y_bottom = y_bottom_origin
-        for countrows in range(rows):
-            res_geoms.append(pygeos.polygons(
-                ((x_left_origin, y_top), (x_right_origin, y_top),
-                (x_right_origin, y_bottom), (x_left_origin, y_bottom)
-                )))
-            y_top = y_top - height
-            y_bottom = y_bottom - height
-        x_left_origin = x_left_origin + height
-        x_right_origin = x_right_origin + height
-
-    return res_geoms
+    save_edges = []
+    for ind,edge in edges.iterrows():
+        if edge.oneway == 'yes':
+            save_edges.append(edge)
+        else:
+            edge.oneway = 'yes'
+            edge.lanes = np.round(edge.lanes/2,0)
+            save_edges.append(edge)
+            edge2 = edge.copy()
+            from_id = edge.from_id
+            to_id = edge.to_id
+            edge2.from_id = to_id
+            edge2.to_id = from_id
+            save_edges.append(edge2)
+            
+    new_edges = pd.DataFrame(save_edges).reset_index(drop=True)
+    new_edges.id = new_edges.index                
+    return new_edges
 
 def get_gdp_values(gdf,data_path):
     """[summary]
@@ -304,7 +265,7 @@ def prepare_network_routing(transport_network):
         [type]: [description]
     """    
 
-    gdf_roads = transport_network.edges
+    gdf_roads = make_directed(transport_network.edges)
     gdf_roads = gdf_roads.rename(columns={"highway": "infra_type"})
     gdf_roads['GC'] = gdf_roads.apply(gc_function,axis=1)
     gdf_roads['max_flow'] = gdf_roads.apply(set_max_flow,axis=1)
@@ -324,7 +285,7 @@ def create_graph(gdf_roads):
     """    
     gdf_in = gdf_roads.reindex(['from_id','to_id'] + [x for x in list(gdf_roads.columns) if x not in ['from_id','to_id']],axis=1)
 
-    g = ig.Graph.TupleList(gdf_in.itertuples(index=False), edge_attrs=list(gdf_in.columns)[2:])
+    g = ig.Graph.TupleList(gdf_in.itertuples(index=False), edge_attrs=list(gdf_in.columns)[2:],directed=True)
     sg = g.clusters().giant()
 
     gdf_in.set_index('id',inplace=True)
@@ -557,7 +518,8 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
     transport_network = load_network(osm_path)
     print('NOTE: Network created')
     
-    sg = create_graph(transport_network.edges)[0]
+    gdf_roads = prepare_network_routing(transport_network)
+    sg = create_graph(gdf_roads)[0]
     main_graph = pd.DataFrame(list(sg.es['geometry']),columns=['geometry'])
     
     gdf_admin = country_grid_gdp_filled(main_graph,country,data_path,rough_grid_split=100,from_main_graph=True)
@@ -587,5 +549,5 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
 
 if __name__ == '__main__':
 
-
+    #country_run(sys.argv[1],os.path.join('C:\\','Data'),plot=False)
     country_run(sys.argv[1],os.path.join(code_path,'..','..','Data'),plot=False)

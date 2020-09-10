@@ -1234,6 +1234,58 @@ def split_edges_at_nodes(network, tolerance=1e-9):
         edges=edges
     )
 
+
+def fill_attributes(network):
+    """[summary]
+
+    Args:
+        edges ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """    
+    vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)    
+    
+    def fill_oneway(x):
+        if isinstance(x.oneway,str):
+            return x.oneway
+        else:
+            return 'no'
+
+    def fill_lanes(x):
+        if isinstance(x.lanes,str):
+            return int(x.lanes)  
+        elif x.lanes is None:
+            if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
+                return int(vals_to_assign.loc[x.highway.split('_')[0]].lanes)
+            else:           
+                return int(vals_to_assign.loc[x.highway].lanes)
+        elif np.isnan(x.lanes):
+            if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
+                return int(vals_to_assign.loc[x.highway.split('_')[0]].lanes)
+            else:           
+                return int(vals_to_assign.loc[x.highway].lanes)
+            
+    def fill_maxspeed(x):
+        if isinstance(x.maxspeed,str):
+            return [int(s) for s in x.maxspeed.split() if s.isdigit()][0]
+        elif x.maxspeed is None:
+            if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
+                return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)
+            else:           
+                return int(vals_to_assign.loc[x.highway].maxspeed)
+        elif np.isnan(x.maxspeed):
+            if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
+                return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)
+            else:           
+                return int(vals_to_assign.loc[x.highway].maxspeed)  
+
+    network.edges['oneway'] = network.edges.apply(lambda x: fill_oneway(x),axis=1)
+    network.edges['lanes'] = network.edges.apply(lambda x: fill_lanes(x),axis=1)
+    network.edges['maxspeed'] = network.edges.apply(lambda x: fill_maxspeed(x),axis=1)
+    
+    return network
+
 #returns a geopandas dataframe of a simplified network
 def simplified_network(df):
     net = Network(edges=df)
@@ -1249,7 +1301,8 @@ def simplified_network(df):
     net = merge_multilinestrings(net)
     logicCheck(net)
     net =quickFix(net)
-    net = add_travel_time(net)     
+    net = fill_attributes(net)
+    net = add_travel_time(net)    
     return net
 
 def add_modal(network,alter_transport,threshold=0.02):
@@ -1377,7 +1430,6 @@ def findMulti(net):
             #out.add_layer(multiline,name='m',crs='EPSG:4326')
     #except: 
     print(len(multi), " multilines found")
-
 
 def quickFix(net):
     edges = net.edges.copy()
