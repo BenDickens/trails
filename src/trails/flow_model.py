@@ -14,7 +14,11 @@ import pylab as pl
 from IPython import display
 import seaborn as sns
 import subprocess
-gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join('..','..',"osmconf.ini"))
+
+import pathlib
+code_path = (pathlib.Path(__file__).parent.absolute())
+gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmconf.ini"))
+
 from shapely.wkb import loads
 data_path = os.path.join('..','data')
 
@@ -249,35 +253,35 @@ def create_OD(gdf_admin,country_name,data_path):
     if 'NAME_1' not in gdf_admin.columns:
         gdf_admin['NAME_1'] = ['reg'+str(x) for x in list(gdf_admin.index)]
         
-    get_basetable(country_name,data_path).to_csv(os.path.join('..','..','downscale_od','basetable.csv'), 
+    get_basetable(country_name,data_path).to_csv(os.path.join(code_path,'..','..','downscale_od','basetable.csv'), 
         sep=',',header=False,index=False)
 
     proxy_reg = pd.DataFrame(gdf_admin[['NAME_1','gdp_area']])
     proxy_reg['year'] = 2016
     proxy_reg = proxy_reg[['year','NAME_1','gdp_area']]
     proxy_reg.columns = ['year','id','gdp_area']
-    proxy_reg.to_csv(os.path.join('..','..','downscale_od','proxy_reg.csv'),index=False)
+    proxy_reg.to_csv(os.path.join(code_path,'..','..','downscale_od','proxy_reg.csv'),index=False)
 
     indices = pd.DataFrame(sectors,columns=['sector'])
     indices['name'] = country_name
     indices = indices.reindex(['name','sector'],axis=1)
-    indices.to_csv(os.path.join('..','..','downscale_od','indices.csv'),index=False,header=False)    
+    indices.to_csv(os.path.join(code_path,'..','..','downscale_od','indices.csv'),index=False,header=False)    
     
-    yaml_file = open(os.path.join('..','..',"downscale_od","settings_basic.yml"), "r")
+    yaml_file = open(os.path.join(code_path,'..','..',"downscale_od","settings_basic.yml"), "r")
     list_of_lines = yaml_file.readlines()
     list_of_lines[6] = '  - id: {}\n'.format(country_name)   
     list_of_lines[8] = '    into: [{}]    \n'.format(','.join(['reg'+str(x) for x in list(gdf_admin.index)]))
 
-    yaml_file = open(os.path.join('..','..',"downscale_od","settings_basic.yml"), "w")
+    yaml_file = open(os.path.join(code_path,'..','..',"downscale_od","settings_basic.yml"), "w")
     yaml_file.writelines(list_of_lines)
     yaml_file.close()
     
-    p = subprocess.Popen([r'..\..\downscale_od\mrio_disaggregate', 'settings_basic.yml'],
-                    cwd=os.path.join('..','..','downscale_od'))
+    p = subprocess.Popen([os.path.join(code_path,'..','..','downscale_od','mrio_disaggregate'), 'settings_basic.yml'],
+                    cwd=os.path.join(code_path,'..','..','downscale_od'))
     
     p.wait()
     
-    OD = pd.read_csv(os.path.join('..','..','downscale_od','output.csv'),header=None)
+    OD = pd.read_csv(os.path.join(code_path,'..','..','downscale_od','output.csv'),header=None)
     OD.columns = pd.MultiIndex.from_product([gdf_admin.NAME_1,sectors])
     OD.index = pd.MultiIndex.from_product([gdf_admin.NAME_1,sectors])
     OD = OD.groupby(level=0,axis=0).sum().groupby(level=0,axis=1).sum()
@@ -438,7 +442,7 @@ def update_gc_function(segment):
         Trate = 2
         return 0.57*segment['wait_time']+0.49*segment['time']+1*Trate+0.44*1    
 
-def run_flow_analysis(country,transport_network,gdf_admin,OD_dict):
+def run_flow_analysis(country,transport_network,gdf_admin,OD_dict,notebook=False):
     """[summary]
 
     Args:
@@ -462,7 +466,8 @@ def run_flow_analysis(country,transport_network,gdf_admin,OD_dict):
     max_iter = 100
     save_fits = []
 
-    plt.ion() ## Note this correction
+    if not notebook:
+        plt.ion() ## Note this correction
 
     while optimal == False:
         sg.es['GC'] = [(lambda segment: update_gc_function(segment))(segment) for segment in list(sg.es)]
@@ -478,17 +483,22 @@ def run_flow_analysis(country,transport_network,gdf_admin,OD_dict):
         if (sum([x<y for x,y in zip(sg.es['flow'],sg.es['max_flow'])])/len(sg.es)) > 0.99:
             optimal = True
         iterator += 1
-        
-        plt.plot(save_fits) 
-        plt.xlabel('# iteration')
-        plt.ylabel('Share of edges below maximum flow')
-        plt.show()
-        plt.pause(0.0001) #Note this correction
+
+        if notebook:
+            pl.plot(save_fits) 
+            display.display(pl.gcf())
+            display.clear_output(wait=True) 
+        else:
+            plt.plot(save_fits) 
+            plt.xlabel('# iteration')
+            plt.ylabel('Share of edges below maximum flow')
+            plt.show()
+            plt.pause(0.0001) #Note this correction
 
         if iterator == max_iter:
             break    
 
-    plt.savefig(os.path.join('..','..','figures','{}_flow_modelling.png'.format(country)))   
+    plt.savefig(os.path.join(code_path,'..','..','figures','{}_flow_modelling.png'.format(country)))   
     gdf_in['flow'] = pd.DataFrame(sg.es['flow'],columns=['flow'],index=sg.es['id'])
     gdf_in['max_flow'] = pd.DataFrame(sg.es['max_flow'],columns=['max_flow'],index=sg.es['id'])
     gdf_in['wait_time'] = pd.DataFrame(sg.es['wait_time'],columns=['wait_time'],index=sg.es['id'])
@@ -567,7 +577,7 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
         gdf_out_save['geometry'] = gdf_out_save.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))               
 
         gpd.GeoDataFrame(gdf_admin.drop('centroid',axis=1)).to_file(
-            os.path.join('..','..','data',
+            os.path.join(code_path,'..','..','data',
             '{}.gpkg'.format(country)),layer='grid',driver='GPKG')
         gpd.GeoDataFrame(gdf_out_save).to_file(os.path.join('..','..','data',
             '{}.gpkg'.format(country)),layer='network',driver='GPKG') 
@@ -576,4 +586,6 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
         plot_results(gdf_out) 
 
 if __name__ == '__main__':
-    country_run(sys.argv[1],os.path.join('..','..','Data'),plot=False)
+
+
+    country_run(sys.argv[1],os.path.join(code_path,'..','..','Data'),plot=False)
