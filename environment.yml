@@ -14,7 +14,7 @@ dependencies:
         - rasterio
         - matplotlib
         - cartopy
-	- contextily
+        - contextily
         - tqdm
         - rasterstats
         - pip
