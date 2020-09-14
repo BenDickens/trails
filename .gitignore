@@ -108,3 +108,9 @@ venv.bak/
 
 #vscode
 .vscode/
+
+#downscaling folders
+run_downscale*/
+
+#gpkg
+*.gpkg

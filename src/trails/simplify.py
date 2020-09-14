@@ -1244,8 +1244,11 @@ def fill_attributes(network):
     Returns:
         [type]: [description]
     """    
-    vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)    
-    
+    vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
+
+    def get_max(x):
+        return max([int(y) for y in x])
+
     def fill_oneway(x):
         if isinstance(x.oneway,str):
             return x.oneway
@@ -1257,18 +1260,21 @@ def fill_attributes(network):
             return int(x.lanes)  
         elif x.lanes is None:
             if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
-                return int(vals_to_assign.loc[x.highway.split('_')[0]].lanes)
+                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
             else:           
                 return int(vals_to_assign.loc[x.highway].lanes)
         elif np.isnan(x.lanes):
             if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
-                return int(vals_to_assign.loc[x.highway.split('_')[0]].lanes)
+                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
             else:           
                 return int(vals_to_assign.loc[x.highway].lanes)
             
     def fill_maxspeed(x):
         if isinstance(x.maxspeed,str):
-            return [int(s) for s in x.maxspeed.split() if s.isdigit()][0]
+            try:
+                return [int(s) for s in x.maxspeed.split() if s.isdigit()][0]
+            except:
+                 return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)              
         elif x.maxspeed is None:
             if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
                 return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)

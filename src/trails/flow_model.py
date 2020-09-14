@@ -14,6 +14,7 @@ import pylab as pl
 from IPython import display
 import seaborn as sns
 import subprocess
+import shutil
 
 import pathlib
 code_path = (pathlib.Path(__file__).parent.absolute())
@@ -209,40 +210,56 @@ def create_OD(gdf_admin,country_name,data_path):
     Returns:
         [type]: [description]
     """    
+
+    # create list of sectors
     sectors = [chr(i).upper() for i in range(ord('a'),ord('o')+1)]
     
+    # add a region column if not existing yet.
     if 'NAME_1' not in gdf_admin.columns:
         gdf_admin['NAME_1'] = ['reg'+str(x) for x in list(gdf_admin.index)]
-        
-    get_basetable(country_name,data_path).to_csv(os.path.join(code_path,'..','..','downscale_od','basetable.csv'), 
+
+    # prepare paths to downscale a country. We give a country its own directory 
+    # to allow for multiple unique countries running at the same time
+    downscale_basepath = os.path.join(code_path,'..','..','downscale_od')
+    downscale_countrypath = os.path.join(code_path,'..','..','run_downscale_od_{}'.format(country_name))
+    
+    # copy downscaling method into the country directory
+    shutil.copytree(downscale_basepath,downscale_countrypath)
+
+    # save national IO table as basetable for downscaling
+    get_basetable(country_name,data_path).to_csv(os.path.join(downscale_countrypath,'basetable.csv'), 
         sep=',',header=False,index=False)
 
+    # create proxy table with GDP values per region/area
     proxy_reg = pd.DataFrame(gdf_admin[['NAME_1','gdp_area']])
     proxy_reg['year'] = 2016
     proxy_reg = proxy_reg[['year','NAME_1','gdp_area']]
     proxy_reg.columns = ['year','id','gdp_area']
-    proxy_reg.to_csv(os.path.join(code_path,'..','..','downscale_od','proxy_reg.csv'),index=False)
+    proxy_reg.to_csv(os.path.join(downscale_countrypath,'proxy_reg.csv'),index=False)
 
     indices = pd.DataFrame(sectors,columns=['sector'])
     indices['name'] = country_name
     indices = indices.reindex(['name','sector'],axis=1)
-    indices.to_csv(os.path.join(code_path,'..','..','downscale_od','indices.csv'),index=False,header=False)    
+    indices.to_csv(os.path.join(downscale_countrypath,'indices.csv'),index=False,header=False)    
     
-    yaml_file = open(os.path.join(code_path,'..','..',"downscale_od","settings_basic.yml"), "r")
+    # prepare yaml file 
+    yaml_file = open(os.path.join(downscale_countrypath,"settings_basic.yml"), "r")
     list_of_lines = yaml_file.readlines()
     list_of_lines[6] = '  - id: {}\n'.format(country_name)   
     list_of_lines[8] = '    into: [{}]    \n'.format(','.join(['reg'+str(x) for x in list(gdf_admin.index)]))
 
-    yaml_file = open(os.path.join(code_path,'..','..',"downscale_od","settings_basic.yml"), "w")
+    yaml_file = open(os.path.join(downscale_countrypath,"settings_basic.yml"), "w")
     yaml_file.writelines(list_of_lines)
     yaml_file.close()
     
-    p = subprocess.Popen([os.path.join(code_path,'..','..','downscale_od','mrio_disaggregate'), 'settings_basic.yml'],
-                    cwd=os.path.join(code_path,'..','..','downscale_od'))
+    # run libmrio
+    p = subprocess.Popen([os.path.join(downscale_countrypath,'mrio_disaggregate'), 'settings_basic.yml'],
+                    cwd=os.path.join(downscale_countrypath))
     
     p.wait()
     
-    OD = pd.read_csv(os.path.join(code_path,'..','..','downscale_od','output.csv'),header=None)
+    # create OD matrix from libmrio results
+    OD = pd.read_csv(os.path.join(downscale_countrypath,'output.csv'),header=None)
     OD.columns = pd.MultiIndex.from_product([gdf_admin.NAME_1,sectors])
     OD.index = pd.MultiIndex.from_product([gdf_admin.NAME_1,sectors])
     OD = OD.groupby(level=0,axis=0).sum().groupby(level=0,axis=1).sum()
@@ -253,6 +270,9 @@ def create_OD(gdf_admin,country_name,data_path):
     gdf_admin['export'] = list(OD.sum(axis=0))
     gdf_admin = gdf_admin.rename({'NAME_1': 'name'}, axis='columns')
     
+    # and remove country folder again to avoid clutter in the directory
+    shutil.rmtree(downscale_countrypath)
+
     return OD,OD_dict,sectors,gdf_admin
 
 def prepare_network_routing(transport_network):
@@ -430,9 +450,14 @@ def run_flow_analysis(country,transport_network,gdf_admin,OD_dict,notebook=False
     if not notebook:
         plt.ion() ## Note this correction
 
+    # run flow optimization model
     while optimal == False:
+
+        #update cost function per segment, dependent on flows from previous iteration.
         sg.es['GC'] = [(lambda segment: update_gc_function(segment))(segment) for segment in list(sg.es)]
         sg.es['flow'] = 0
+
+        #(re-)assess shortest paths between all regions
         for admin_orig in (list(gdf_admin.name)):
             paths = sg.get_shortest_paths(sg.vs[sg.vs['name'].index(nearest_node[admin_orig])],dest_nodes,weights='GC',output="epath")
             for path,admin_dest in zip(paths,list(gdf_admin.name)):
@@ -441,10 +466,13 @@ def run_flow_analysis(country,transport_network,gdf_admin,OD_dict,notebook=False
 
         fitting_edges = (sum([x<y for x,y in zip(sg.es['flow'],sg.es['max_flow'])])/len(sg.es))
         save_fits.append(fitting_edges)
+
+        # if at least 99% of roads are below max flow, we say its good enough
         if (sum([x<y for x,y in zip(sg.es['flow'],sg.es['max_flow'])])/len(sg.es)) > 0.99:
             optimal = True
         iterator += 1
 
+        # when running the code in a notebook, the figure updates instead of a new figure each iteration
         if notebook:
             pl.plot(save_fits) 
             display.display(pl.gcf())
@@ -459,6 +487,7 @@ def run_flow_analysis(country,transport_network,gdf_admin,OD_dict,notebook=False
         if iterator == max_iter:
             break    
 
+    # save output
     plt.savefig(os.path.join(code_path,'..','..','figures','{}_flow_modelling.png'.format(country)))   
     gdf_in['flow'] = pd.DataFrame(sg.es['flow'],columns=['flow'],index=sg.es['id'])
     gdf_in['max_flow'] = pd.DataFrame(sg.es['max_flow'],columns=['max_flow'],index=sg.es['id'])
@@ -549,5 +578,5 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
 
 if __name__ == '__main__':
 
-    #country_run(sys.argv[1],os.path.join('C:\\','Data'),plot=False)
-    country_run(sys.argv[1],os.path.join(code_path,'..','..','Data'),plot=False)
+    country_run(sys.argv[1],os.path.join('C:\\','Data'),plot=False)
+    #country_run(sys.argv[1],os.path.join(code_path,'..','..','Data'),plot=False)
