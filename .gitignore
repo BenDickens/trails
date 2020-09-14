@@ -114,3 +114,5 @@ run_downscale*/
 
 #gpkg
 *.gpkg
+*.gpkg-shm
+*.gpkg-wal
