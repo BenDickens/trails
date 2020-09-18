@@ -37,6 +37,8 @@ def metrics(graph):
     print("Total Edge length ", np.sum(g.es['distance']))
     convert_nx(g)
 
+
+
 #Creates a graph 
 def graph_load(edges):
     """Creates 
@@ -152,7 +154,7 @@ def choose_OD(pos_OD, OD_no):
     return OD_nodes, mapped_pops
 
 
-def prepare_possible_OD(gridDF, nodes, tolerance = 0.1):
+def prepare_possible_OD(gridDF, nodes, tolerance = 1):
     """Returns an array of tuples, with the first value the node ID to consider, and the
        second value the total population associated with this node. 
        The tolerance is the size of the bounding box to search for nodes within
@@ -252,6 +254,9 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     pos_trip_no = (((OD_node_no**2) - OD_node_no) / 2) - ((np.count_nonzero(np.isinf(OD_orig)))/2)
     counter = 0
     frac_counter = 0 
+    tot_edge_length = np.sum(g.es['distance'])
+    tot_edge_time = np.sum(g.es['time'])
+
 
     while trips_possible:
         exp_edge_no = exp_g.ecount()
@@ -264,9 +269,11 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
             edges_del = range(exp_edge_no)
         exp_g.delete_edges(edges_del)
         frac_counter += del_frac
+        cur_dis_length = 1 - (np.sum(exp_g.es['distance'])/tot_edge_length)
+        cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
         new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
         perc_matrix = np.matrix(new_shortest_paths)
-        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3))  
+        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3),cur_dis_length,cur_dis_time)  
         result_df.append(results)
         
         #If the frac_counter goes past 0.99
@@ -274,7 +281,7 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
         #If there are no edges left to remove
         if exp_edge_no < 1: break
 
-    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'])
+    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2','distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles','pct_thirty_plus_over2', 'pct_thirty_plus_over6', 'pct_twice_plus_over1'])
     return result_df
 
 
@@ -293,7 +300,7 @@ def simple_OD_calc(OD, comparisonOD,pos_trip_no):
     over_thresh_no = np.sum(compare_thresh) / 2
     return over_thresh_no / pos_trip_no
     
-def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
+def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,distance_disruption, time_disruption):
     """Function returns the % of total trips between origins and destinations that exceed fail value
        Almost verbatim from world bank /GOSTnets world_files_criticality_v2.py
 
@@ -322,6 +329,19 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
 
     potentially_disrupted_trips = np.ma.masked_array(masked_demand,masked_OD.mask)
     potentially_disrupted_trips_sum = potentially_disrupted_trips.sum()
+    
+    unaffected_trips = np.ma.masked_equal(masked_OD,masked_baseline).compressed()
+    try:
+        unaffected_percentiles = []
+        unaffected_percentiles.append(np.percentile(unaffected_trips,10))
+        unaffected_percentiles.append(np.percentile(unaffected_trips,25))
+        unaffected_percentiles.append(np.percentile(unaffected_trips,50))
+        unaffected_percentiles.append(np.percentile(unaffected_trips,75))
+        unaffected_percentiles.append(np.percentile(unaffected_trips,90))
+        unaffected_percentiles.append(np.mean(unaffected_trips))
+    except:
+        unaffected_percentiles = []
+
 
     try:
         pct_isolated = (isolated_trips_sum / total_trips)
@@ -335,18 +355,44 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
     potentially_disrupted_trips_original_time = np.ma.masked_array(masked_baseline, masked_OD.mask)
     delta_time_OD = (masked_OD - potentially_disrupted_trips_original_time)
     average_time_disruption = (delta_time_OD * potentially_disrupted_trips).sum() / potentially_disrupted_trips.sum()
+    
+    delayed_trips = delta_time_OD[delta_time_OD !=0].compressed()
+    try:
+        delayed_percentiles = []
+        delayed_percentiles.append(np.percentile(delayed_trips,10))
+        delayed_percentiles.append(np.percentile(delayed_trips,25))
+        delayed_percentiles.append(np.percentile(delayed_trips,50))
+        delayed_percentiles.append(np.percentile(delayed_trips,75))
+        delayed_percentiles.append(np.percentile(delayed_trips,90))
+        delayed_percentiles.append(np.mean(delayed_trips))
+    except:
+        delayed_percentiles = []
 
     frac_OD = masked_OD / potentially_disrupted_trips_original_time
+
+
 
     def PctDisrupt(x, frac_OD, demand):
         masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
         m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
         return ((m_demand.sum()) / (demand.sum()))
 
+    def PctDisrupt_with_N(x, frac_OD, demand, n):
+        journeys_over_n = np.ma.masked_greater(baseline, n)
+        masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
+        disrupt_and_over = np.logical_and(journeys_over_n.mask,masked_frac_OD.mask)
+        m_demand = np.ma.masked_array(demand, disrupt_and_over)
+        jon_demand = np.ma.masked_array(demand, journeys_over_n.mask)
+        return ((m_demand.sum()) / (demand.sum()))
+
     pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
     pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
     pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
 
+    pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
+    pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
+    pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
+  
     # Flexing demand with trip cost
     def surplus_loss(e, C2, C1, D1):
         """[summary]
@@ -387,13 +433,13 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter):
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, masked_demand)
 
     #Masked values are not friendly to later pandas manipulation, only use for quick visualisation
-    if pct_isolated is masked: pct_isolated = 0
-    if pct_thirty_plus is masked: pct_thirty_plus = 0
-    if pct_twice_plus is masked: pct_twice_plus = 0
-    if pct_thrice_plus is masked: pct_thrice_plus = 0
+    #if pct_isolated is masked: pct_isolated = 0
+    #if pct_thirty_plus is masked: pct_thirty_plus = 0
+    #if pct_twice_plus is masked: pct_twice_plus = 0
+    #if pct_thrice_plus is masked: pct_thrice_plus = 0
 
+    return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
 
-    return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
 
 def reset_ids(edges, nodes):
     """Resets the ids of the nodes and edges, editing 
