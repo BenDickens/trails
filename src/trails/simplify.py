@@ -594,7 +594,7 @@ def add_travel_time(network):
     }
     def calculate_time(edge):
         try:
-            return edge['distance'] / speed_d.get(edge['highway'])
+            return edge['distance'] / (edge['maxspeed']*1000) #metres per hour
         except:
              return edge['distance'] / speed_d.get('unclassified')
            
@@ -1245,6 +1245,32 @@ def fill_attributes(network):
         [type]: [description]
     """    
     vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
+
+    speed_d = {
+        'motorway':80,
+        'motorway_link': 65,
+        'trunk': 60,
+        'trunk_link':50,
+        'primary': 50, # metres ph
+        'primary_link':40,
+        'secondary': 40, # metres ph
+        'secondary_link':30,
+        'tertiary':30,
+        'tertiary_link': 20,
+        'unclassified':20,
+        'service':20,
+        'residential': 20,  # mph
+    }
+      
+    #fill empty cells
+    vals_to_assign.lanes.loc[vals_to_assign.lanes.str.len() == 0] = 1
+
+    try:
+        vals_to_assign.maxspeed.iloc[0]
+    except:
+        print('NOTE: No maxspeed values available in the country, fall back on default')
+        df_speed = pd.DataFrame.from_dict(speed_d,orient='index',columns=['maxspeed'])
+        vals_to_assign = vals_to_assign.join(df_speed)
 
     def get_max(x):
         return max([int(y) for y in x])
