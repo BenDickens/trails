@@ -1274,15 +1274,15 @@ def fill_attributes(network):
             try:
                 return [int(s) for s in x.maxspeed.split() if s.isdigit()][0]
             except:
-                 return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)              
+                 return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))              
         elif x.maxspeed is None:
             if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
-                return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)
+                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))
             else:           
                 return int(vals_to_assign.loc[x.highway].maxspeed)
         elif np.isnan(x.maxspeed):
             if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
-                return int(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed)
+                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))
             else:           
                 return int(vals_to_assign.loc[x.highway].maxspeed)  
 
@@ -1305,7 +1305,7 @@ def simplified_network(df):
     net = reset_ids(net) 
     net = add_distances(net)
     net = merge_multilinestrings(net)
-    logicCheck(net)
+    #logicCheck(net)
     net =quickFix(net)
     net = fill_attributes(net)
     net = add_travel_time(net)    
