@@ -3,7 +3,7 @@
 Ben Dickens, Elco Koks & Tom Russell
 """
 import os
-
+import re
 import numpy as np
 import pandas as pd
 
@@ -164,7 +164,7 @@ def add_topology(network, id_col='id'):
             bugs.append(edge.id)
             to_ids.append(-1)
 
-    print(len(bugs)," Edges not connected to nodes")
+    #print(len(bugs)," Edges not connected to nodes")
     edges = network.edges.copy()
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
@@ -1235,6 +1235,7 @@ def split_edges_at_nodes(network, tolerance=1e-9):
     )
 
 
+
 def fill_attributes(network):
     """[summary]
 
@@ -1244,36 +1245,92 @@ def fill_attributes(network):
     Returns:
         [type]: [description]
     """    
-    vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
-
     speed_d = {
-        'motorway':80,
-        'motorway_link': 65,
-        'trunk': 60,
-        'trunk_link':50,
-        'primary': 50, # metres ph
-        'primary_link':40,
-        'secondary': 40, # metres ph
-        'secondary_link':30,
-        'tertiary':30,
-        'tertiary_link': 20,
-        'unclassified':20,
-        'service':20,
-        'residential': 20,  # mph
+        'motorway':'80',
+        'motorway_link': '65',
+        'trunk': '60',
+        'trunk_link':'50',
+        'primary': '50', # metres ph
+        'primary_link':'40',
+        'secondary': '40', # metres ph
+        
+        'secondary_link':'30',
+        'tertiary':'30',
+        'tertiary_link': '20',
+        'unclassified':'20',
+        'service':'20',
+        'residential': '20',  # mph
     }
-      
-    #fill empty cells
-    vals_to_assign.lanes.loc[vals_to_assign.lanes.str.len() == 0] = 1
+
+    lanes_d = {
+        'motorway':'4',
+        'motorway_link': '2',
+        'trunk': '4',
+        'trunk_link':'2',
+        'primary': '2', # metres ph
+        'primary_link':'1',
+        'secondary': '2', # metres ph
+        'secondary_link':'1',
+        'tertiary':'2',
+        'tertiary_link': '1',
+        'unclassified':'2',
+        'service':'1',
+        'residential': '1',  # mph
+    }
+
+    df_speed = pd.DataFrame.from_dict(speed_d,orient='index',columns=['maxspeed'])
+    df_lanes = pd.DataFrame.from_dict(lanes_d,orient='index',columns=['lanes'])
+
+
+    try:
+        vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
+    except:
+        vals_to_assign = df_lanes.join(df_speed)
+
+    try:
+        vals_to_assign.lanes.iloc[0]
+    except:
+        print('NOTE: No maxspeed values available in the country, fall back on default')
+        vals_to_assign = vals_to_assign.join(df_lanes)  
+
 
     try:
         vals_to_assign.maxspeed.iloc[0]
     except:
         print('NOTE: No maxspeed values available in the country, fall back on default')
-        df_speed = pd.DataFrame.from_dict(speed_d,orient='index',columns=['maxspeed'])
         vals_to_assign = vals_to_assign.join(df_speed)
 
+    def fill_empty_maxspeed(x):
+      if len(list(x.maxspeed)) == 0:
+        return speed_d[x.name]
+      else:
+        return x.maxspeed
+        
+    def fill_empty_lanes(x):
+      if len(list(x.lanes)) == 0:
+        return lanes_d[x.name]
+      else:
+        return x.lanes
+    
+    def get_max_in_vals_to_assign(x):
+        if isinstance(x,list):
+          return max([(y) for y in x])
+        else:
+          try:
+            return re.findall(r'\d+',x)[0]
+          except:
+            return x      
+            
     def get_max(x):
         return max([int(y) for y in x])
+                   
+    #fill empty cells
+    vals_to_assign.lanes = vals_to_assign.apply(lambda x: fill_empty_lanes(x),axis=1)
+   
+    vals_to_assign.maxspeed = vals_to_assign.apply(lambda x: fill_empty_maxspeed(x),axis=1)
+        
+    vals_to_assign.maxspeed = vals_to_assign.maxspeed.apply(lambda x: get_max_in_vals_to_assign(x))
+
 
     def fill_oneway(x):
         if isinstance(x.oneway,str):
@@ -1283,7 +1340,13 @@ def fill_attributes(network):
 
     def fill_lanes(x):
         if isinstance(x.lanes,str):
-            return int(x.lanes)  
+            try:
+              return int(x.lanes)  
+            except:
+                try:
+                    return int(get_max(re.findall(r'\d+', x.lanes)))
+                except:
+                    return int(vals_to_assign.loc[x.highway].lanes)                  
         elif x.lanes is None:
             if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
                 return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
@@ -1300,15 +1363,29 @@ def fill_attributes(network):
             try:
                 return [int(s) for s in x.maxspeed.split() if s.isdigit()][0]
             except:
-                 return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))              
+                try:
+                  return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))
+                except:
+                  try:
+                    return int(get_max(re.findall(r'\d+', x.maxspeed)))
+                  except:
+                    return int(vals_to_assign.loc[x.highway].maxspeed)             
         elif x.maxspeed is None:
             if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
                 return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))
             else:           
-                return int(vals_to_assign.loc[x.highway].maxspeed)
+                try:
+                  return int(get_max(re.findall(r'\d+', x.maxspeed)))
+                except:
+                  return int(vals_to_assign.loc[x.highway].maxspeed)  
+                  
         elif np.isnan(x.maxspeed):
             if isinstance(vals_to_assign.loc[x.highway].maxspeed,np.ndarray):
+              try:
                 return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].maxspeed))
+              except:
+                print(vals_to_assign.loc[x.highway].maxspeed)
+                return int(vals_to_assign.loc[x.highway].maxspeed)              
             else:           
                 return int(vals_to_assign.loc[x.highway].maxspeed)  
 

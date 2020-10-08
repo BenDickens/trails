@@ -16,6 +16,8 @@ import seaborn as sns
 import subprocess
 import shutil
 
+from multiprocessing import Pool,cpu_count
+
 import pathlib
 code_path = (pathlib.Path(__file__).parent.absolute())
 gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmconf.ini"))
@@ -555,28 +557,43 @@ def country_run(country,data_path=os.path.join('C:\\','Data'),plot=False,save=Tr
 
     print('NOTE: GDP values extracted')
 
-    OD,OD_dict,sectors,gdf_admin = create_OD(gdf_admin,country,data_path)
-    print('NOTE: OD created')
+    # OD,OD_dict,sectors,gdf_admin = create_OD(gdf_admin,country,data_path)
+    # print('NOTE: OD created')
     
-    gdf_out = run_flow_analysis(country,transport_network,gdf_admin,OD_dict)
-    print('NOTE: Flow analysis finished')
+    # gdf_out = run_flow_analysis(country,transport_network,gdf_admin,OD_dict)
+    # print('NOTE: Flow analysis finished')
 
-    if save:
-        gdf_admin['geometry'] = gdf_admin.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))
-        gdf_out = gdf_out.loc[~gdf_out.max_flow.isna()].reset_index(drop=True)
-        gdf_out_save = gdf_out.copy()
-        gdf_out_save['geometry'] = gdf_out_save.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))               
+    # if save:
+    #     gdf_admin['geometry'] = gdf_admin.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))
+    #     gdf_out = gdf_out.loc[~gdf_out.max_flow.isna()].reset_index(drop=True)
+    #     gdf_out_save = gdf_out.copy()
+    #     gdf_out_save['geometry'] = gdf_out_save.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))               
 
-        gpd.GeoDataFrame(gdf_admin.drop('centroid',axis=1)).to_file(
-            os.path.join(code_path,'..','..','data',
-            '{}.gpkg'.format(country)),layer='grid',driver='GPKG')
-        gpd.GeoDataFrame(gdf_out_save).to_file(os.path.join('..','..','data',
-            '{}.gpkg'.format(country)),layer='network',driver='GPKG') 
+    #     gpd.GeoDataFrame(gdf_admin.drop('centroid',axis=1)).to_file(
+    #         os.path.join(code_path,'..','..','data',
+    #         '{}.gpkg'.format(country)),layer='grid',driver='GPKG')
+    #     gpd.GeoDataFrame(gdf_out_save).to_file(os.path.join('..','..','data',
+    #         '{}.gpkg'.format(country)),layer='network',driver='GPKG') 
 
-    if plot:
-        plot_results(gdf_out) 
+    # if plot:
+    #     plot_results(gdf_out) 
 
 if __name__ == '__main__':
 
-    country_run(sys.argv[1],os.path.join('C:\\','Data'),plot=False)
+
+    #country_run(sys.argv[1],os.path.join('C:\\','Data'),plot=False)
     #country_run(sys.argv[1],os.path.join(code_path,'..','..','Data'),plot=False)
+    #data_path = os.path.join('C:\\','Data') 
+
+    if (len(sys.argv) > 1) & (len(sys.argv[1]) == 3):    
+        country_run(sys.argv[1])
+    elif (len(sys.argv) > 1) & (len(sys.argv[1]) > 3):    
+        glob_info = pd.read_excel(os.path.join('/scistor','ivm','eks510','projects','trails','global_information.xlsx'))
+        glob_info = glob_info.loc[glob_info.continent==sys.argv[1]]
+        countries = list(glob_info.ISO_3digit)   
+        if len(countries) == 0:
+            print('FAILED: Please write the continents as follows: Africa, Asia, Central-America, Europe, North-America,Oceania, South-America') 
+        with Pool(cpu_count()) as pool: 
+          pool.map(country_run,countries,chunksize=1) 
+    else:
+        print('FAILED: Either provide an ISO3 country name or a continent name')
