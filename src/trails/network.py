@@ -1,3 +1,4 @@
+import os,sys
 import igraph as ig
 import numpy as np
 from timeit import default_timer as timer
@@ -15,6 +16,9 @@ import pygeos as pyg
 
 from pgpkg import Geopackage
 from numpy.ma import masked
+import pathlib
+data_path = os.path.join((pathlib.Path(__file__).resolve().parents[2]),'data','percolation')
+
 
 
 def metrics(graph):
@@ -439,6 +443,46 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     #if pct_thrice_plus is masked: pct_thrice_plus = 0
 
     return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
+
+
+def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
+    """ This function returns results for a single country's transport network.  Possible OD points are chosen
+    then probabilistically selected according to the populations each node counts (higher population more likely).
+
+    Args:
+        country (String): ISO 3 code for country
+        edges, nodes (pandas.DataFrame) :  dataframes with the edges and nodes of country
+        OD_no (int) :  number of OD pairs to use
+        run_no (int) : number of runs
+        seed (int) : 
+        nodes (pandas.DataFrame): nodes to re-reference ids
+
+    Returns:
+        pd.concat(results) (pandas.DataFrame) : The results of the percolation
+    """
+    #Get GDP for country (world bank values 2019)   
+    all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
+    gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+    # Each country has a set of centroids of grid cells with populations for each cell
+    all_OD = pd.read_csv(open(os.path.join(data_path,"od_points_per_country.csv")))
+    possibleOD = all_OD.loc[all_OD.GID_0 == country].reset_index(drop=True)
+    del possibleOD['Unnamed: 0']
+    del possibleOD['GID_0']
+    possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.Geometry)
+
+    if seed:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    OD_pos = prepare_possible_OD(possibleOD, nodes)
+    results = []
+    for x in range(run_no):
+        OD_nodes, populations = choose_OD(OD_pos, 100)
+        results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
+    
+    return pd.concat(results)
+
+
 
 
 def reset_ids(edges, nodes):
