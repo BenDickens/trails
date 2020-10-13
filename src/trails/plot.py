@@ -25,7 +25,7 @@ gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(".","osmconf.ini"))
 wb = ['JAM','AFG']
 
 def filename(country):
-    osm_prefix = '/home/r/IES/Transport_Network/network/osm_files/'
+    osm_prefix = ''
     osm_suffix = ".osm.pbf"
     return osm_prefix + country + osm_suffix
 
