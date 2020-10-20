@@ -14,12 +14,19 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pygeos as pyg
 
-from pgpkg import Geopackage
+
+from numpy import inf
+
+#from pgpkg import Geopackage
 from numpy.ma import masked
 import pathlib
 data_path = os.path.join((pathlib.Path(__file__).resolve().parents[2]),'data','percolation')
 
+from multiprocessing import Pool,cpu_count
+from itertools import repeat
 
+#import warnings
+#warnings.filterwarnings("ignore")
 
 def metrics(graph):
     """This method prints some basic network metrics of an iGraph
@@ -40,8 +47,6 @@ def metrics(graph):
     print("Maximum degree: ", g.maxdegree())
     print("Total Edge length ", np.sum(g.es['distance']))
     convert_nx(g)
-
-
 
 #Creates a graph 
 def graph_load(edges):
@@ -218,9 +223,25 @@ def nearest(geom, gdf,sindex, tolerance):
             key=lambda match: pyg.measurement.distance(match.geometry,geom)
         )
     except: 
-        print("Couldn't find node")
+        #print("Couldn't find node")
         return -1
     return nearest_geom.id
+
+
+def simple_OD_calc(OD, comparisonOD,pos_trip_no):
+    """An alternative OD calculation that counts how many trips exceed threshold length
+
+    Args:
+        OD ([type]): [description]
+        comparisonOD ([type]): [description]
+        pos_trip_no ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """    
+    compare_thresh = np.greater(OD,comparisonOD)
+    over_thresh_no = np.sum(compare_thresh) / 2
+    return over_thresh_no / pos_trip_no
 
 
 def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_capita=50000):
@@ -238,13 +259,17 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     result_df = []
     g = graph_load(edges)
     #These if statements allow for an OD and population list to be randomly generated
-    if OD_list == []: OD_nodes = random.sample(range(g.vcount()-1),100)
-    else: OD_nodes = OD_list
+    if OD_list == []: 
+        OD_nodes = random.sample(range(g.vcount()-1),100)
+    else: 
+        OD_nodes = OD_list
     edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
-    if pop_list == []: node_pop = random.sample(range(4000), OD_node_no)
-    else: node_pop = pop_list
+    if pop_list == []: 
+        node_pop = random.sample(range(4000), OD_node_no)
+    else:
+         node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
     base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
@@ -261,7 +286,6 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
 
-
     while trips_possible:
         exp_edge_no = exp_g.ecount()
         #The number of edges to delete
@@ -277,6 +301,7 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
         new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
         perc_matrix = np.matrix(new_shortest_paths)
+        perc_matrix[perc_matrix == inf] = 99999999999
         results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3),cur_dis_length,cur_dis_time)  
         result_df.append(results)
         
@@ -286,23 +311,9 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
         if exp_edge_no < 1: break
 
     result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2','distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles','pct_thirty_plus_over2', 'pct_thirty_plus_over6', 'pct_twice_plus_over1'])
+    result_df = result_df.replace('--',0)
     return result_df
 
-
-def simple_OD_calc(OD, comparisonOD,pos_trip_no):
-    """An alternative OD calculation that counts how many trips exceed threshold length
-
-    Args:
-        OD ([type]): [description]
-        comparisonOD ([type]): [description]
-        pos_trip_no ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """    
-    compare_thresh = np.greater(OD,comparisonOD)
-    over_thresh_no = np.sum(compare_thresh) / 2
-    return over_thresh_no / pos_trip_no
     
 def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,distance_disruption, time_disruption):
     """Function returns the % of total trips between origins and destinations that exceed fail value
@@ -319,8 +330,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     Returns:
         frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
     """
-    ans = []
-
     masked_OD = np.ma.masked_greater(OD, value = (fail_value - 1))
     masked_baseline = np.ma.masked_greater(baseline, value = (fail_value - 1))
     adj_time = np.ma.masked_array(OD,masked_baseline.mask)
@@ -335,6 +344,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     potentially_disrupted_trips_sum = potentially_disrupted_trips.sum()
     
     unaffected_trips = np.ma.masked_equal(masked_OD,masked_baseline).compressed()
+
     try:
         unaffected_percentiles = []
         unaffected_percentiles.append(np.percentile(unaffected_trips,10))
@@ -346,7 +356,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     except:
         unaffected_percentiles = []
 
-
     try:
         pct_isolated = (isolated_trips_sum / total_trips)
     except:
@@ -354,13 +363,13 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     ## Set up for ratio-based calculations
 
-    fail_ratio = 50.0 #((fail_value-1) / baseline.max()) # headlimit above which trip destoryed
+    fail_ratio = 50.0 #((fail_value-1) / baseline.max()) # headlimit above which trip destroyed
 
     potentially_disrupted_trips_original_time = np.ma.masked_array(masked_baseline, masked_OD.mask)
     delta_time_OD = (masked_OD - potentially_disrupted_trips_original_time)
     average_time_disruption = (delta_time_OD * potentially_disrupted_trips).sum() / potentially_disrupted_trips.sum()
-    
     delayed_trips = delta_time_OD[delta_time_OD !=0].compressed()
+
     try:
         delayed_percentiles = []
         delayed_percentiles.append(np.percentile(delayed_trips,10))
@@ -374,11 +383,10 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     frac_OD = masked_OD / potentially_disrupted_trips_original_time
 
-
-
     def PctDisrupt(x, frac_OD, demand):
         masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
         m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
+        #print(m_demand.sum(),demand.sum())
         return ((m_demand.sum()) / (demand.sum()))
 
     def PctDisrupt_with_N(x, frac_OD, demand, n):
@@ -386,16 +394,17 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
         masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
         disrupt_and_over = np.logical_and(journeys_over_n.mask,masked_frac_OD.mask)
         m_demand = np.ma.masked_array(demand, disrupt_and_over)
-        jon_demand = np.ma.masked_array(demand, journeys_over_n.mask)
         return ((m_demand.sum()) / (demand.sum()))
 
     pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
     pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
     pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
 
-    pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
-    pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
+    print(pct_twice_plus,pct_twice_plus,pct_thrice_plus)
+
     pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
+    pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
+    pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,6)
   
     # Flexing demand with trip cost
     def surplus_loss(e, C2, C1, D1):
@@ -430,20 +439,22 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
         return total_surp_loss, total_pct_surplus_loss
 
-    adj_cost = (adj_time * GDP_per_capita) / (365 * 8 * 3600)
-    baseline_cost = (masked_baseline * GDP_per_capita) / (365 * 8 * 3600)
+    adj_cost = (adj_time * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
+    baseline_cost = (masked_baseline * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
 
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, masked_demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, masked_demand)
 
-    #Masked values are not friendly to later pandas manipulation, only use for quick visualisation
-    #if pct_isolated is masked: pct_isolated = 0
-    #if pct_thirty_plus is masked: pct_thirty_plus = 0
-    #if pct_twice_plus is masked: pct_twice_plus = 0
-    #if pct_thrice_plus is masked: pct_thrice_plus = 0
+    if pct_isolated is masked: pct_isolated = np.nan
+    if total_surp_loss_e1 is masked: total_surp_loss_e1 = np.nan
+    if total_pct_surplus_loss_e1 is masked: total_pct_surplus_loss_e1 = np.nan
+    if total_surp_loss_e2 is masked: total_surp_loss_e2 = np.nan
+    if total_pct_surplus_loss_e2 is masked: total_pct_surplus_loss_e2 = np.nan
+    if pct_thirty_plus is masked: pct_thirty_plus = np.nan
+    if pct_twice_plus is masked: pct_twice_plus = np.nan
+    if pct_thrice_plus is masked: pct_thrice_plus = np.nan
 
     return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
-
 
 def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
@@ -476,14 +487,31 @@ def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
 
     OD_pos = prepare_possible_OD(possibleOD, nodes)
     results = []
-    for x in range(run_no):
-        OD_nodes, populations = choose_OD(OD_pos, 100)
+    for x in tqdm(range(run_no),total=run_no,desc='percolation'):
+        OD_nodes, populations = choose_OD(OD_pos, OD_no)
         results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
     
+
+    # list_ois = []
+    # list_pos = []
+
+    # for x in tqdm(range(run_no),total=run_no):
+    #     oi, po = choose_OD(OD_pos, OD_no)
+    #     list_ois.append(oi)
+    #     list_pos.append(po)
+
+    # edges.geometry = pyg.to_wkb((edges.geometry))
+
+    # with Pool(cpu_count()-1) as pool: 
+    #       results = pool.starmap(percolation_Final,zip(repeat(edges,run_no),
+    #                                                         repeat(0.01,run_no),
+    #                                                         list_ois,
+    #                                                         list_pos,
+    #                                                         repeat(gdp,run_no)),
+    #                                                         chunksize=1) 
+
+
     return pd.concat(results)
-
-
-
 
 def reset_ids(edges, nodes):
     """Resets the ids of the nodes and edges, editing 
@@ -519,8 +547,6 @@ def reset_ids(edges, nodes):
     edges.reset_index(drop=True,inplace=True)
     nodes.reset_index(drop=True,inplace=True)
     return edges,nodes
-
-
 
 
 #
@@ -592,7 +618,6 @@ def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
         #showMore(exp_g)
         
         #if counter > counterMax: break
-    
     
     x_ax = []
     frac_inc = 0
@@ -766,10 +791,6 @@ def edge_to_perc(edges, isolated_threshold = 3, OD_no=100, del_frac=0.02):
     return percolation_by_length(g,randomOD,del_frac, isolated_threshold)
 
 
-
-
-
-
 def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
     """[summary]
 
@@ -846,10 +867,6 @@ def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
     plt.show()
     print(isolated_trip_results)
 '''
-    
-
-
-
 
 if __name__ == '__main__':     
     largest_component_df()
