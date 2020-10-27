@@ -471,12 +471,8 @@ def clean_roundabouts(network):
             start = pygeom.get_point(e[1],0)
             end = pygeom.get_point(e[1],-1)
             first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
-            #print(first_co_is_closer)
-            #print("start ",start," and end ", end)
             co_ords = pygeos.coordinates.get_coordinates(edge.geometry)
             centroid_co = pygeos.coordinates.get_coordinates(round_centroid)
-            #print(type(co_ords))
-            #print(type(centroid_co))
             if first_co_is_closer: 
                 new_co = np.concatenate((centroid_co,co_ords))
             else:
@@ -1187,27 +1183,23 @@ def reset_ids(network):
 
 def split_edges_at_nodes(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
-
-    Args:
-        network (class): A network composed of nodes (points in space) and edges (lines)
-        tolerance ([type], optional): [description]. Defaults to 1e-9.
-
-    Returns:
-        [type]: [description]
-    """    
+    """
+    sindex_nodes = pygeos.STRtree(network.nodes['geometry'])
     sindex_edges = pygeos.STRtree(network.edges['geometry'])
-    
     attributes = [x for x in network.edges.columns if x not in ['index','geometry','osm_id']]
-
+    
     grab_all_edges = []
-    new_nodes = []
     for edge in tqdm(network.edges.itertuples(index=False), desc="split", total=len(network.edges)):
+        hits_nodes = nodes_intersecting(edge.geometry,network.nodes['geometry'],sindex_nodes, tolerance=1e-9)
         hits_edges = nodes_intersecting(edge.geometry,network.edges['geometry'],sindex_edges, tolerance=1e-9)
         hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
-        hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
-        hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in hits_edges] for item in sublist],name='geometry')
-        hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
-            pygeos.constructive.extract_unique_points(hits_edges.values))]#pygeos.multipoints(hits_edges.values)))]#pd.concat([hits_nodes,hits_edges]).values)))]
+        try:
+            hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
+            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in hits_edges] for item in sublist],name='geometry')
+            hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
+                pygeos.constructive.extract_unique_points(pygeos.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
+        except TypeError:
+            return hits_edges
         
         hits = pd.DataFrame(hits,columns=['geometry'])    
         
@@ -1220,21 +1212,17 @@ def split_edges_at_nodes(network, tolerance=1e-9):
         split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
 
         new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
-
         grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge[2:-1]]*len(new_edges)])
-
+    
     # combine all new edges
     edges = pd.DataFrame([[item[0],item[1]]+list(item[2]) for sublist in [list(zip(x[0],x[1],x[2])) 
                                                                           for x in grab_all_edges] for item in sublist],
                          columns=['osm_id','geometry']+attributes)
-
     # return new network with split edges
     return Network(
         nodes=network.nodes,
         edges=edges
     )
-
-
 
 def fill_attributes(network):
     """[summary]
@@ -1399,8 +1387,8 @@ def fill_attributes(network):
 def simplified_network(df):
     net = Network(edges=df)
     net = clean_roundabouts(net)
-    net = split_edges_at_nodes(net)
     net = add_endpoints(net)
+    net = split_edges_at_nodes(net)
     net = add_ids(net)
     net = add_topology(net)    
     net = drop_hanging_nodes(net)    
@@ -1409,10 +1397,12 @@ def simplified_network(df):
     net = add_distances(net)
     net = merge_multilinestrings(net)
     #logicCheck(net)
-    net =quickFix(net)
+    #net =quickFix(net)
     net = fill_attributes(net)
     net = add_travel_time(net)    
     return net
+
+
 
 def add_modal(network,alter_transport,threshold=0.02):
     """
