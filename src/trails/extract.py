@@ -129,9 +129,4 @@ def mainRoads(osm_path):
     Returns:
         *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.   
     """ 
-<<<<<<< HEAD
     return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ","='primary_link' or ", "='secondary' or ", "='secondary_link' or ","='tertiary' or ","='tertiary_link'"]})
-=======
-    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ",
-                    "='primary_link' or ", "='secondary' or ", "='secondary_link' or ","='tertiary' or ","='tertiary_link'"]})
->>>>>>> c368c5bf6ea880af12137caeada642304cc11b79
