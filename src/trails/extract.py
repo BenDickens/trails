@@ -54,7 +54,7 @@ def retrieve(osm_path,geoType,keyCol,**valConstraint):
     for a in keyCol: cl.append(a)
     if data is not None:
         print('query is finished, lets start the loop')
-        for feature in tqdm(sql_lyr):
+        for feature in tqdm(sql_lyr,desc='extract'):
             try:
                 if feature.GetField(keyCol[0]) is not None:
                     geom = from_wkb(feature.geometry().ExportToWkb()) 
@@ -85,7 +85,7 @@ def roads(osm_path):
     Returns:
         *GeoDataFrame* : a geopandas GeoDataFrame with all unique road linestrings.
     """   
-    return retrieve(osm_path,'lines',['highway']) 
+    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed']) 
  
 def railway(osm_path):
     """
@@ -129,5 +129,4 @@ def mainRoads(osm_path):
     Returns:
         *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.   
     """ 
-    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ",
-                    "='primary_link' or ", "='secondary' or ","='tertiary' or ","='tertiary_link'"]})
+    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ","='primary_link' or ", "='secondary' or ", "='secondary_link' or ","='tertiary' or ","='tertiary_link'"]})

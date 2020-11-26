@@ -386,7 +386,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     def PctDisrupt(x, frac_OD, demand):
         masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
         m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
-        #print(m_demand.sum(),demand.sum())
         return ((m_demand.sum()) / (demand.sum()))
 
     def PctDisrupt_with_N(x, frac_OD, demand, n):
@@ -399,8 +398,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
     pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
     pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
-
-    print(pct_twice_plus,pct_twice_plus,pct_thrice_plus)
 
     pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
     pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
@@ -420,9 +417,10 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
             [type]: [description]
         """
         Y_intercept_max_cost = C1 - (e * D1)
+        (np.amax(Y_intercept_max_cost.shape))
 
         C2 = np.minimum(C2, Y_intercept_max_cost)
-
+        
         delta_cost = C2 - C1
 
         delta_demand = (delta_cost / e)
@@ -440,10 +438,10 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
         return total_surp_loss, total_pct_surplus_loss
 
     adj_cost = (adj_time * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
-    baseline_cost = (masked_baseline * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
+    baseline_cost = (baseline * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
 
-    total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, masked_demand)
-    total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, masked_demand)
+    total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost.data, baseline_cost, demand)
+    total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost.data, baseline_cost, demand)
 
     if pct_isolated is masked: pct_isolated = np.nan
     if total_surp_loss_e1 is masked: total_surp_loss_e1 = np.nan
