@@ -5,14 +5,15 @@ import geopandas as gpd
 from extract import retrieve, mainRoads,roads,ferries,railway
 import gdal
 import pygeos as pyg
-import simplify as simp
+import simplify as simply
 import network as net
 import matplotlib.pyplot as plt
 import igraph as ig
 import feather
 import math
-from multiprocessing import Pool
+from multiprocessing import Pool,cpu_count
 import pathlib
+
 code_path = (pathlib.Path(__file__).parent.absolute())
 gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmconf.ini"))
 
@@ -28,15 +29,20 @@ if __name__ == '__main__':
 
     def simp(x):
         print(x)
-        cGDF = mainRoads(filename(x))
-        bob = simp.simplified_network(cGDF)
-        a,b = net.largest_component_df(bob.edges,bob.nodes)
-        a['geometry'] = pyg.to_wkb(a['geometry'])
-        b['geometry'] = pyg.to_wkb(b['geometry'])
-        feather.write_dataframe(a,"/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather")
-        feather.write_dataframe(b,"/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-nodes.feather")
-        #x_ax, isolated_trip_results = net.alt(a)
-        print(x + "is done")
-    pool = Pool()
-    pool.map(simp,countries)
+        roads_to_keep = ['primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','trunk','trunk_link','motorway','motorway_link']
+        if not os.path.exists("/scistor/ivm/data_catalogue/open_street_map/simplified_networks/"+x+"-edges.feather"):
+            cGDF = roads(filename(x))
+            cGDF = cGDF.loc[cGDF.highway.isin(roads_to_keep)].reset_index(drop=True)
+            bob = simply.simplified_network(cGDF)
+            a,b = bob.edges,bob.nodes
+            a['geometry'] = pyg.to_wkb(a['geometry'])
+            b['geometry'] = pyg.to_wkb(b['geometry'])
+            print(a.highway.unique())
+            feather.write_dataframe(a,"/scistor/ivm/data_catalogue/open_street_map/simplified_networks/"+x+"-edges.feather")
+            feather.write_dataframe(b,"/scistor/ivm/data_catalogue/open_street_map/simplified_networks/"+x+"-nodes.feather")
+            #x_ax, isolated_trip_results = net.alt(a)
+        print(x + " is done")
+    
+    with Pool(cpu_count()) as pool: 
+        pool.map(simp,countries,chunksize=1)
 
