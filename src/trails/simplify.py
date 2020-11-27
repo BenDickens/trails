@@ -1273,15 +1273,15 @@ def fill_attributes(network):
     df_lanes = pd.DataFrame.from_dict(lanes_d,orient='index',columns=['lanes'])
 
     def turn_to_int(x):
-        if isinstance(x,str):
-            if len(re.findall(r'\d+',x)) > 0:
-                return re.findall(r'\d+',x)[0]
+        if isinstance(x.maxspeed,str):
+            if len(re.findall(r'\d+',x.maxspeed) > 0:
+                return re.findall(r'\d+',x.maxspeed)[0]
             else:
-                return x
+                return speed_d[x.highway]
         else:
             return x
 
-    network.edges.maxspeed = network.edges.maxspeed.apply(turn_to_int)
+    network.edges.maxspeed = network.edges.apply(turn_to_int)
     
     try:
         vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
