@@ -33,20 +33,33 @@ def metrics(graph):
 
     Args:
         graph (iGraph.Graph object): 
+    Returns:
+        m: 
     """    
     g = graph
+    return pd.DataFrame([[g.ecount(),g.vcount(),g.density(),g.omega(),g.average_path_length(directed=False),g.assortativity_degree(False),g.diameter(directed=False),g.edge_connectivity(),g.maxdegree(),np.sum(g.es['distance'])]],columns=["Edge_No","Node_No","Density","Clique_No", "Ave_Path_Length", "Assortativity","Diameter","Edge_Connectivity","Max_Degree","Total_Edge_Length"])
+
+
+def metrics_Print(graph):
+    """This method prints some basic network metrics of an iGraph
+
+    Args:
+        graph (iGraph.Graph object): 
+    Returns:
+        m: 
+    """    
+    g = graph
+    m = []
     print("Number of edges: ", g.ecount())
     print("Number of nodes: ", g.vcount())
     print("Density: ", g.density())
-    print("Number of cliques: ", g.omega())#or g.clique_number()
+    print("Number of cliques: ", g.omega())#omega or g.clique_number()
     print("Average path length: ", g.average_path_length(directed=False))
     print("Assortativity: ", g.assortativity_degree(False))
     print("Diameter: ",g.diameter(directed=False))
     print("Edge Connectivity: ", g.edge_connectivity())
-    print("Graph is simple", g.is_simple())
     print("Maximum degree: ", g.maxdegree())
     print("Total Edge length ", np.sum(g.es['distance']))
-    convert_nx(g)
 
 #Creates a graph 
 def graph_load(edges):
@@ -866,5 +879,52 @@ def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
     print(isolated_trip_results)
 '''
 
+def split_record(x):
+    edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather")
+    nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-nodes.feather")
+
+    edge_tuples = zip(edges['from_id'],edges['to_id'])
+    graph = ig.Graph(directed=False)
+    graph.add_vertices(len(nodes))
+    graph.vs['id'] = nodes['id']
+    graph.add_edges(edge_tuples)
+    graph.es['id'] = edges['id']
+    graph.es['distance'] = edges.distance
+    all_df = metrics(graph)
+    all_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_all_metrics.csv")
+
+
+    cluster_sizes = graph.clusters().sizes()
+    cluster_sizes.sort(reverse=True) 
+    cluster_loc = [graph.clusters().sizes().index(x) for x in cluster_sizes[:5]]
+
+    main_cluster = graph.clusters().giant()
+    main_df = metrics(main_cluster)
+    main_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_0_metrics.csv")
+    main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
+    main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
+    main_edges, main_nodes = reset_ids(main_edges,main_nodes)
+    feather.write_dataframe(main_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-edges.feather")
+    feather.write_dataframe(main_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-nodes.feather")
+    skipped_giant = False
+
+    counter = 1
+    for x in cluster_loc:
+        if not skipped_giant:
+            skipped_giant=True
+            continue
+        if len(graph.clusters().subgraph(x).vs) < 500:
+            break
+        g = graph.clusters().subgraph(x)
+        g_edges = edges.loc[edges.id.isin(g.es()['id'])]
+        g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
+        g_edges, g_nodes = reset_ids(g_edges,g_nodes)
+        feather.write_dataframe(g_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+counter+"-edges.feather")
+        feather.write_dataframe(g_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+counter+"-nodes.feather")
+        g_df = metrics(g)
+        g_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_"+counter+"_metrics.csv")
+        counter += 1
+
 if __name__ == '__main__':     
-    largest_component_df()
+    with Pool(cpu_count()) as pool: 
+         pool.map(split_record,countries,chunksize=1)   
