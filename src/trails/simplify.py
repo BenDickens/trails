@@ -1274,7 +1274,7 @@ def fill_attributes(network):
 
     def turn_to_int(x):
         if isinstance(x.maxspeed,str):
-            if len(re.findall(r'\d+',x.maxspeed) > 0:
+            if len(re.findall(r'\d+',x.maxspeed)) > 0:
                 return re.findall(r'\d+',x.maxspeed)[0]
             else:
                 return speed_d[x.highway]
