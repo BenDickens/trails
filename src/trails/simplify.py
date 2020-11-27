@@ -1212,12 +1212,15 @@ def split_edges_at_nodes(network, tolerance=1e-9):
         split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
 
         new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
+        
         grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge[2:-1]]*len(new_edges)])
-    
+
+    big_list = [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] 
+
     # combine all new edges
-    edges = pd.DataFrame([[item[0],item[1]]+list(item[2]) for sublist in [list(zip(x[0],x[1],x[2])) 
-                                                                          for x in grab_all_edges] for item in sublist],
+    edges = pd.DataFrame([[item[0],item[1]]+list(item[2]) for sublist in big_list for item in sublist],
                          columns=['osm_id','geometry']+attributes)
+    
     # return new network with split edges
     return Network(
         nodes=network.nodes,
@@ -1269,18 +1272,28 @@ def fill_attributes(network):
     df_speed = pd.DataFrame.from_dict(speed_d,orient='index',columns=['maxspeed'])
     df_lanes = pd.DataFrame.from_dict(lanes_d,orient='index',columns=['lanes'])
 
+    def turn_to_int(x):
+        if isinstance(x,str):
+            if len(re.findall(r'\d+',x)) > 0:
+                return re.findall(r'\d+',x)[0]
+            else:
+                return x
+        else:
+            return x
 
+    network.edges.maxspeed = network.edges.maxspeed.apply(turn_to_int)
+    
     try:
         vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
     except:
         vals_to_assign = df_lanes.join(df_speed)
 
+    print(vals_to_assign)
     try:
         vals_to_assign.lanes.iloc[0]
     except:
         print('NOTE: No maxspeed values available in the country, fall back on default')
         vals_to_assign = vals_to_assign.join(df_lanes)  
-
 
     try:
         vals_to_assign.maxspeed.iloc[0]
@@ -1389,6 +1402,7 @@ def simplified_network(df):
     net = clean_roundabouts(net)
     net = add_endpoints(net)
     net = split_edges_at_nodes(net)
+    net = add_endpoints(net)
     net = add_ids(net)
     net = add_topology(net)    
     net = drop_hanging_nodes(net)    
@@ -1396,7 +1410,7 @@ def simplified_network(df):
     net = reset_ids(net) 
     net = add_distances(net)
     net = merge_multilinestrings(net)
-    #logicCheck(net)
+    # #logicCheck(net)
     #net =quickFix(net)
     net = fill_attributes(net)
     net = add_travel_time(net)    
