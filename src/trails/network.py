@@ -10,6 +10,7 @@ from plotly.graph_objs import *
 import math
 import random
 import matplotlib.pyplot as plt
+import feather
 
 import pandas as pd
 import pygeos as pyg
@@ -909,13 +910,13 @@ def split_record(x):
     skipped_giant = False
 
     counter = 1
-    for x in cluster_loc:
+    for y in cluster_loc:
         if not skipped_giant:
             skipped_giant=True
             continue
-        if len(graph.clusters().subgraph(x).vs) < 500:
+        if len(graph.clusters().subgraph(y).vs) < 500:
             break
-        g = graph.clusters().subgraph(x)
+        g = graph.clusters().subgraph(y)
         g_edges = edges.loc[edges.id.isin(g.es()['id'])]
         g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
         g_edges, g_nodes = reset_ids(g_edges,g_nodes)
