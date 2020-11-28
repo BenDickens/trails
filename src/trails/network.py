@@ -4,7 +4,6 @@ import numpy as np
 from timeit import default_timer as timer
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import networkx as nx
 import plotly.offline as py
 from plotly.graph_objs import *
 import math
@@ -323,8 +322,11 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
         if results[0] >= 0.99: break
         #If there are no edges left to remove
         if exp_edge_no < 1: break
-
-    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2','distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles','pct_thirty_plus_over2', 'pct_thirty_plus_over6', 'pct_twice_plus_over1'])
+    #'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','pct_thirty_plus_over2', 'pct_thirty_plus_over6', 'pct_twice_plus_over1'
+    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 
+                                                'average_time_disruption','total_surp_loss_e1', 
+                                                'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2',
+                                                'distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles'])
     result_df = result_df.replace('--',0)
     return result_df
 
@@ -397,25 +399,25 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     frac_OD = masked_OD / potentially_disrupted_trips_original_time
 
-    def PctDisrupt(x, frac_OD, demand):
-        masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
-        m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
-        return ((m_demand.sum()) / (demand.sum()))
+    # def PctDisrupt(x, frac_OD, demand):
+    #     masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
+    #     m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
+    #     return ((m_demand.sum()) / (demand.sum()))
 
-    def PctDisrupt_with_N(x, frac_OD, demand, n):
-        journeys_over_n = np.ma.masked_greater(baseline, n)
-        masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
-        disrupt_and_over = np.logical_and(journeys_over_n.mask,masked_frac_OD.mask)
-        m_demand = np.ma.masked_array(demand, disrupt_and_over)
-        return ((m_demand.sum()) / (demand.sum()))
+    # def PctDisrupt_with_N(x, frac_OD, demand, n):
+    #     journeys_over_n = np.ma.masked_greater(baseline, n)
+    #     masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
+    #     disrupt_and_over = np.logical_and(journeys_over_n.mask,masked_frac_OD.mask)
+    #     m_demand = np.ma.masked_array(demand, disrupt_and_over)
+    #     return ((m_demand.sum()) / (demand.sum()))
 
-    pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
-    pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
-    pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
+    # pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
+    # pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
+    # pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
 
-    pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
-    pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
-    pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,6)
+    # pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
+    # pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
+    # pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,6)
   
     # Flexing demand with trip cost
     def surplus_loss(e, C2, C1, D1):
@@ -462,13 +464,14 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     if total_pct_surplus_loss_e1 is masked: total_pct_surplus_loss_e1 = np.nan
     if total_surp_loss_e2 is masked: total_surp_loss_e2 = np.nan
     if total_pct_surplus_loss_e2 is masked: total_pct_surplus_loss_e2 = np.nan
-    if pct_thirty_plus is masked: pct_thirty_plus = np.nan
-    if pct_twice_plus is masked: pct_twice_plus = np.nan
-    if pct_thrice_plus is masked: pct_thrice_plus = np.nan
+    # if pct_thirty_plus is masked: pct_thirty_plus = np.nan
+    # if pct_twice_plus is masked: pct_twice_plus = np.nan
+    # if pct_thrice_plus is masked: pct_thrice_plus = np.nan
+    #pct_thirty_plus, pct_twice_plus, pct_thrice_plus,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
 
-    return frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
+    return frac_counter, pct_isolated, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
-def run_percolation_cluster(x):
+def run_percolation_cluster(x,run_no=200):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -478,35 +481,42 @@ def run_percolation_cluster(x):
     Returns:
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
+
+    #get all networks for a country
+    get_all_networks = [y[4] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/") if (y.startswith(x) & y.endswith('-edges.feather'))]
+
+    for network in get_all_networks:
     #Get GDP for country (world bank values 2019)   
     #all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
-    country = x
-    all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
-    gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-    edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-edges.feather")
-    nodes = feather.write_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-nodes.feather")
-    # Each country has a set of centroids of grid cells with populations for each cell
-    possibleOD = pd.read_csv(open("/scistor/ivm/data_catalogue/open_street_map/country_OD_points/"+x+".csv"))
-    grid_height = possibleOD.grid_height.iloc[2]
-    #radius of circle to cover entire box,  pythagorus theorem
-    h = np.sqrt(((grid_height)**2) *2)
-    del possibleOD['Unnamed: 0']
-    del possibleOD['GID_0']
-    possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.Geometry)
+        country = x
+        all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
+        gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+        edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-edges.feather")
+        nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-nodes.feather")
+        nodes.geometry = pyg.from_wkb(nodes.geometry)
 
-    seed = sum(map(ord,country))
-    random.seed(seed)
-    np.random.seed(seed)
+        # Each country has a set of centroids of grid cells with populations for each cell
+        possibleOD = pd.read_csv(open("/scistor/ivm/data_catalogue/open_street_map/country_OD_points/"+x+".csv"))
+        grid_height = possibleOD.grid_height.iloc[2]
+        #radius of circle to cover entire box,  pythagorus theorem
+        h = np.sqrt(((grid_height)**2) *2)
+        del possibleOD['Unnamed: 0']
+        del possibleOD['GID_0']
+        possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
 
-    OD_pos = prepare_possible_OD(possibleOD, nodes, h)
-    results = []
-    for x in tqdm(range(run_no),total=run_no,desc='percolation'):
-        OD_nodes, populations = choose_OD(OD_pos, OD_no)
-        results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
-    
+        seed = sum(map(ord,country))
+        random.seed(seed)
+        np.random.seed(seed)
 
-    res = pd.concat(results)
-    res.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_0_results.csv")
+        OD_pos = prepare_possible_OD(possibleOD, nodes, h)
+        OD_no = min(len(OD_pos),100)
+        results = []
+        for x in tqdm(range(run_no),total=run_no,desc='percolation'):
+            OD_nodes, populations = choose_OD(OD_pos, OD_no)
+            results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
+        
+        res = pd.concat(results)
+        res.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv")
 
 
 
@@ -971,7 +981,9 @@ def split_record(x):
 if __name__ == '__main__':     
     #countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES', 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
     #countries is without CHN, DEU, RUS, USA
-    countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES', 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CHN', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DEU', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RUS', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'USA', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
+    countries = ['ABW', 'AFG', 'AGO','AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES'] #, 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CHN', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DEU', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RUS', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'USA', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
+    fin_countries =  [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_results/")]
+    countries_left = list(set(countries) - set(fin_countries))
 
     with Pool(cpu_count()) as pool: 
-        pool.map(run_percolation_cluster,countries,chunksize=1)   
+        pool.map(run_percolation_cluster,countries_left[::-1],chunksize=1)   
