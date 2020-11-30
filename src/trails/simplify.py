@@ -1279,9 +1279,9 @@ def fill_attributes(network):
             else:
                 return speed_d[x.highway]
         else:
-            return x
+            return x.maxspeed
 
-    network.edges.maxspeed = network.edges.apply(turn_to_int)
+    network.edges.maxspeed = network.edges.apply(turn_to_int,axis=1)
     
     try:
         vals_to_assign = network.edges.groupby('highway')[['lanes','maxspeed']].agg(pd.Series.mode)   
@@ -1395,7 +1395,7 @@ def fill_attributes(network):
     network.edges['maxspeed'] = network.edges.apply(lambda x: fill_maxspeed(x),axis=1)
     
     return network
-
+    
 #returns a geopandas dataframe of a simplified network
 def simplified_network(df):
     net = Network(edges=df)

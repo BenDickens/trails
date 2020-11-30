@@ -22,7 +22,7 @@ from numpy.ma import masked
 import pathlib
 data_path = os.path.join((pathlib.Path(__file__).resolve().parents[2]),'data','percolation')
 
-from multiprocessing import Pool,cpu_count
+from pathos.multiprocessing import Pool,cpu_count
 from itertools import repeat
 
 #import warnings
@@ -486,39 +486,46 @@ def run_percolation_cluster(x,run_no=200):
     get_all_networks = [y[4] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/") if (y.startswith(x) & y.endswith('-edges.feather'))]
 
     for network in get_all_networks:
+        try:
     #Get GDP for country (world bank values 2019)   
     #all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
-        country = x
-        all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
-        gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-        edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-edges.feather")
-        nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-nodes.feather")
-        nodes.geometry = pyg.from_wkb(nodes.geometry)
+            country = x
 
-        # Each country has a set of centroids of grid cells with populations for each cell
-        possibleOD = pd.read_csv(open("/scistor/ivm/data_catalogue/open_street_map/country_OD_points/"+x+".csv"))
-        grid_height = possibleOD.grid_height.iloc[2]
-        #radius of circle to cover entire box,  pythagorus theorem
-        h = np.sqrt(((grid_height)**2) *2)
-        del possibleOD['Unnamed: 0']
-        del possibleOD['GID_0']
-        possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
+            if os.path.isfile("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv"):
+                print(country+' '+network+" already finished!")           
+                continue
+            
+            print(country+' '+network+" started!")
+            all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
+            gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+            edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-edges.feather")
+            nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-nodes.feather")
+            nodes.geometry = pyg.from_wkb(nodes.geometry)
 
-        seed = sum(map(ord,country))
-        random.seed(seed)
-        np.random.seed(seed)
+            # Each country has a set of centroids of grid cells with populations for each cell
+            possibleOD = pd.read_csv(open("/scistor/ivm/data_catalogue/open_street_map/country_OD_points/"+x+".csv"))
+            grid_height = possibleOD.grid_height.iloc[2]
+            #radius of circle to cover entire box,  pythagorus theorem
+            h = np.sqrt(((grid_height)**2) *2)
+            del possibleOD['Unnamed: 0']
+            del possibleOD['GID_0']
+            possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
 
-        OD_pos = prepare_possible_OD(possibleOD, nodes, h)
-        OD_no = min(len(OD_pos),100)
-        results = []
-        for x in tqdm(range(run_no),total=run_no,desc='percolation'):
-            OD_nodes, populations = choose_OD(OD_pos, OD_no)
-            results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
-        
-        res = pd.concat(results)
-        res.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv")
+            seed = sum(map(ord,country))
+            random.seed(seed)
+            np.random.seed(seed)
 
-
+            OD_pos = prepare_possible_OD(possibleOD, nodes, h)
+            OD_no = min(len(OD_pos),100)
+            results = []
+            for x in tqdm(range(run_no),total=run_no,desc='percolation for '+country+' '+network):
+                OD_nodes, populations = choose_OD(OD_pos, OD_no)
+                results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
+            
+            res = pd.concat(results)
+            res.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv")
+        except Exception as e: 
+            print(country+' '+network+" failed because of {}".format(e))
 
 def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
@@ -933,57 +940,74 @@ def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
 '''
 
 def split_record(x):
-    edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather")
-    nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-nodes.feather")
+    
+    try:
+        print(x+' has started!')
+        edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather")
+        nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-nodes.feather")
+ 
+        edges = edges.drop('geometry',axis=1)
+        edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
+        graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
+        graph.vs['id'] = graph.vs['name']
 
-    edge_tuples = zip(edges['from_id'],edges['to_id'])
-    graph = ig.Graph(directed=False)
-    graph.add_vertices(len(nodes))
-    graph.vs['id'] = nodes['id']
-    graph.add_edges(edge_tuples)
-    graph.es['id'] = edges['id']
-    graph.es['distance'] = edges.distance
-    all_df = metrics(graph)
-    all_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_all_metrics.csv")
+        # edge_tuples = zip(edges['from_id'],edges['to_id'])
+        # graph = ig.Graph(directed=False)
+        # graph.add_vertices(len(nodes))
+        # graph.vs['id'] = nodes['id']
+        # graph.add_edges(edge_tuples)
+        # graph.es['id'] = edges['id']
+        # graph.es['distance'] = edges.distance
+        all_df = metrics(graph)
+        all_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_all_metrics.csv")
 
 
-    cluster_sizes = graph.clusters().sizes()
-    cluster_sizes.sort(reverse=True) 
-    cluster_loc = [graph.clusters().sizes().index(x) for x in cluster_sizes[:5]]
+        cluster_sizes = graph.clusters().sizes()
+        cluster_sizes.sort(reverse=True) 
+        cluster_loc = [graph.clusters().sizes().index(x) for x in cluster_sizes[:5]]
 
-    main_cluster = graph.clusters().giant()
-    main_df = metrics(main_cluster)
-    main_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_0_metrics.csv")
-    main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
-    main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
-    main_edges, main_nodes = reset_ids(main_edges,main_nodes)
-    feather.write_dataframe(main_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-edges.feather")
-    feather.write_dataframe(main_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-nodes.feather")
-    skipped_giant = False
+        main_cluster = graph.clusters().giant()
+        main_df = metrics(main_cluster)
+        main_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_0_metrics.csv")
+        main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
+        main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
+        main_edges, main_nodes = reset_ids(main_edges,main_nodes)
+        feather.write_dataframe(main_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-edges.feather")
+        feather.write_dataframe(main_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-nodes.feather")
+        skipped_giant = False
 
-    counter = 1
-    for y in cluster_loc:
-        if not skipped_giant:
-            skipped_giant=True
-            continue
-        if len(graph.clusters().subgraph(y).vs) < 500:
-            break
-        g = graph.clusters().subgraph(y)
-        g_edges = edges.loc[edges.id.isin(g.es()['id'])]
-        g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
-        g_edges, g_nodes = reset_ids(g_edges,g_nodes)
-        feather.write_dataframe(g_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-edges.feather")
-        feather.write_dataframe(g_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-nodes.feather")
-        g_df = metrics(g)
-        g_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_"+str(counter)+"_metrics.csv")
-        counter += 1
+        counter = 1
+        for y in cluster_loc:
+            if not skipped_giant:
+                skipped_giant=True
+                continue
+            if len(graph.clusters().subgraph(y).vs) < 500:
+                break
+            g = graph.clusters().subgraph(y)
+            g_edges = edges.loc[edges.id.isin(g.es()['id'])]
+            g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
+            g_edges, g_nodes = reset_ids(g_edges,g_nodes)
+            feather.write_dataframe(g_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-edges.feather")
+            feather.write_dataframe(g_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-nodes.feather")
+            g_df = metrics(g)
+            g_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_"+str(counter)+"_metrics.csv")
+            counter += 1
+        print(x+' has finished!')
+
+    except Exception as e: 
+        print(x+" failed because of {}".format(e))
 
 if __name__ == '__main__':     
     #countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES', 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
     #countries is without CHN, DEU, RUS, USA
-    countries = ['ABW', 'AFG', 'AGO','AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES'] #, 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CHN', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DEU', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RUS', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'USA', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
-    fin_countries =  [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_results/")]
-    countries_left = list(set(countries) - set(fin_countries))
+    countries = [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/road_networks/")]
+    fin_countries =  [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/")]
+    left_countries = list(set(countries)-set(fin_countries))
+    left_countries = [x[:3] for x in left_countries]
+    from random import shuffle
+    #shuffle(left_countries)
+    #left_countries = ['BRB', 'BTN', 'KNA', 'GUY', 'NFK', 'BLZ', 'WLF', 'SHN', 'WSM', 'KIR', 'MCO', 'VUT', 'TUV', 'XAD','ASM','FSM','MHL','PLW','VGB','MDV','SLB','VCT']
+    print(left_countries)
 
-    with Pool(cpu_count()) as pool: 
-        pool.map(run_percolation_cluster,countries_left[::-1],chunksize=1)   
+    with Pool(10) as pool: 
+        pool.map(split_record,left_countries,chunksize=1)   
