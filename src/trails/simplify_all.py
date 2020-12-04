@@ -42,7 +42,7 @@ if __name__ == '__main__':
             print(x + " is done")
             #x_ax, isolated_trip_results = net.alt(a)
     
-    with Pool(cpu_count()) as pool: 
+    with Pool(processes=cpu_count()-4) as pool: 
          pool.map(simp,countries,chunksize=1)
 
 
