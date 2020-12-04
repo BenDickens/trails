@@ -300,6 +300,8 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     tot_edge_time = np.sum(g.es['time'])
 
     while trips_possible:
+        if frac_counter > 0.2 and frac_counter <= 0.4: del_frac = 0.02
+        if frac_counter > 0.4: del_frac = 0.05
         exp_edge_no = exp_g.ecount()
         #The number of edges to delete
         no_edge_del = math.floor(del_frac * edge_no)
@@ -471,7 +473,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     return frac_counter, pct_isolated, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
-def run_percolation_cluster(x,run_no=100):
+def run_percolation_cluster(x,run_no=200):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -543,10 +545,10 @@ def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
     #Get GDP for country (world bank values 2019)   
-    all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
+    all_gdp = pd.read_csv(open("worldbank_gdp_2019.csv"),error_bad_lines=False)
     gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
     # Each country has a set of centroids of grid cells with populations for each cell
-    all_OD = pd.read_csv(open(os.path.join(data_path,"od_points_per_country.csv")))
+    all_OD = pd.read_csv(open("od_points_per_country.csv"))
     possibleOD = all_OD.loc[all_OD.GID_0 == country].reset_index(drop=True)
     del possibleOD['Unnamed: 0']
     del possibleOD['GID_0']
@@ -1005,10 +1007,9 @@ if __name__ == '__main__':
     left_countries = list(set(countries)-set(fin_countries))
     left_countries = [x[:3] for x in left_countries]
     from random import shuffle
-    #left_countries = ['DEU','FRA','RUS','ITA','TUR','SAU']
     #shuffle(left_countries)
-    left_countries = ['ABW', 'BMU', 'BTN', 'CUB', 'CUW', 'CYM', 'ERI', 'FRO', 'GIB', 'MAF', 'NCL', 'PLW', 'PRK', 'PSE','PYF','SMR','SOM','SSD','SXM','SYR','TCA','TKM','TON','VEN','VIR','YEM']
+    #left_countries = ['BRB', 'BTN', 'KNA', 'GUY', 'NFK', 'BLZ', 'WLF', 'SHN', 'WSM', 'KIR', 'MCO', 'VUT', 'TUV', 'XAD','ASM','FSM','MHL','PLW','VGB','MDV','SLB','VCT']
     print(left_countries)
-    
+
     with Pool(10) as pool: 
-        pool.map(run_percolation_cluster,left_countries,chunksize=1)   
+        pool.map(split_record,left_countries,chunksize=1)   
