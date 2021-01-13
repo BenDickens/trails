@@ -37,8 +37,9 @@ pd.options.mode.chained_assignment = None
 #data_path = os.path.join('..','data')
 data_path = (pathlib.Path(__file__).parent.absolute().parent.absolute().parent.absolute())
 data_path = os.path.join(data_path,'data')
-from pgpkg import Geopackage
-road_Types = ['primary','trunk','motorway','motorway_link','trunk_link','primary_link','secondary','secondary_link','tertiary','tertiary_link']
+road_types = ['primary','trunk','motorway','motorway_link','trunk_link','primary_link','secondary','secondary_link','tertiary','tertiary_link']
+
+from utils import tqdm_standin as tqdm
 
 # optional progress bars
 '''
@@ -523,7 +524,7 @@ def clean_roundabouts(network):
     new = pd.DataFrame(new_edge,columns=['osm_id']+attributes+['geometry'])
     dg = network.edges.loc[~network.edges.index.isin(remove_edge)]
     
-    ges = pd.concat([dg,new]).reset_index()
+    ges = pd.concat([dg,new]).reset_index(drop=True)
 
     return Network(edges=ges, nodes=network.nodes)
 
@@ -1202,7 +1203,7 @@ def nearest_network_node_list(gdf_admin,gdf_nodes,sg):
     gdf_nodes.reset_index(drop=True,inplace=True)
     nodes = {}
     for admin_ in gdf_admin.itertuples():
-        if (pygeos.distance((admin_.geometry),gdf_nodes.geometry).min()) > 0.01:
+        if (pygeos.distance((admin_.geometry),gdf_nodes.geometry).min()) > 0.005:
             continue
         nodes[admin_.id] = gdf_nodes.iloc[pygeos.distance((admin_.geometry),gdf_nodes.geometry).idxmin()].id        
     return nodes
@@ -1243,7 +1244,6 @@ def split_edges_at_nodes(network, tolerance=1e-9):
         nodes=network.nodes,
         edges=edges
     )
-
 def fill_attributes(network):
     """[summary]
 
@@ -1305,7 +1305,7 @@ def fill_attributes(network):
     except:
         vals_to_assign = df_lanes.join(df_speed)
 
-    print(vals_to_assign)
+    #print(vals_to_assign)
     try:
         vals_to_assign.lanes.iloc[0]
     except:
@@ -1412,8 +1412,17 @@ def fill_attributes(network):
     network.edges['maxspeed'] = network.edges.apply(lambda x: fill_maxspeed(x),axis=1)
     
     return network   
-#returns a geopandas dataframe of a simplified network
-def simplified_network(df):
+
+def simplified_network(df,drop_hanging_nodes_run=True):
+    """returns a geopandas dataframe of a simplified network
+
+    Args:
+        df ([type]): [description]
+        drop_hanging_nodes_run (bool, optional): [description]. Defaults to True.
+
+    Returns:
+        [type]: [description]
+    """    
     net = Network(edges=df)
     net = clean_roundabouts(net)
     net = add_endpoints(net)
@@ -1421,316 +1430,380 @@ def simplified_network(df):
     net = add_endpoints(net)
     net = add_ids(net)
     net = add_topology(net)    
-    net = drop_hanging_nodes(net)    
+    if drop_hanging_nodes_run:
+        net = drop_hanging_nodes(net)    
+    else:
+         net.nodes['degree'] = calculate_degree(net)
+            
     net = merge_edges(net)
     net = reset_ids(net) 
     net = add_distances(net)
     net = merge_multilinestrings(net)
-    # #logicCheck(net)
-    #net =quickFix(net)
     net = fill_attributes(net)
     net = add_travel_time(net)    
     return net   
 
-def add_ferry_info(country):
-    nodes = pd.read_feather(os.path.join(data_path,'road_networks','{}-nodes.feather'.format(country)))
-    edges = pd.read_feather(os.path.join(data_path,'road_networks','{}-edges.feather'.format(country)))
-    nodes.geometry = pygeos.from_wkb(nodes.geometry)
-    edges.geometry = pygeos.from_wkb(edges.geometry)
-    connectors = connect_ferries(country)
+def ferry_connected_network(country,data_path):
+    """
+    connect ferries to main network (and connect smaller sub networks automatically)
 
-    node_id = len(nodes)
-    connectors['osm_id'] = 'None' 
-    connectors['highway'] = 'connector'
-    connectors['maxspeed'] = 20
-    connectors['oneway'] = False
-    connectors['lanes'] = '1'
-    x = connectors.geometry.iloc[0]
-    x = pygeos.get_point(x,0)
-    lon = pygeom.get_x(x)
-    lat = pygeom.get_y(x)
-    approximate_crs = "epsg:" + str(int(32700-np.round((45+lat)/90,0)*100+np.round((183+lon)/6,0)))
-    coords = pygeos.get_coordinates(connectors.geometry)
-    transformer=pyproj.Transformer.from_crs("epsg:4326", approximate_crs,always_xy=True)
-    new_coords = transformer.transform(coords[:, 0], coords[:, 1])
-    result = pygeos.set_coordinates(connectors.geometry.copy(), np.array(new_coords).T)
-    connectors['distance'] = pygeos.length(result)
-    new_nodes = []
-    new_edges = []
+    Args:
+        country ([type]): [description]
+        data_path ([type]): [description]
 
-    for link in connectors.itertuples():
-        start = pygeos.get_point(link.geometry,0)
-        end = pygeos.get_point(link.geometry,-1)
-        if len(nodes.loc[nodes.geometry==start]) < 1: nodes = nodes.append({'geometry':start,'degree':-1,'id':node_id},ignore_index=True)
-        if len(nodes.loc[nodes.geometry==end]) < 1: nodes = nodes.append({'geometry':end,'degree':-1,'id':node_id},ignore_index=True)
+    Returns:
+        [type]: [description]
+    """
+    # load full network
+    full_network = roads(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
+    main_road_network = full_network.loc[full_network.highway.isin(road_types)].reset_index(drop=True)
     
+    # load ferries
+    ferry_network = ferries(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
+    
+    # create a main network where hanging nodes are not removed
+    network_with_hanging = simplified_network(main_road_network,drop_hanging_nodes_run=False)
+    nodes,edges = network_with_hanging.nodes.copy(),network_with_hanging.edges.copy()
+    
+    # create connections between ferry network and the main network
+    connectors = connect_ferries(country,data_path,full_network,ferry_network)
+   
 
+    # loop through ferry connectors to add to edges of main network
     for link in connectors.itertuples():
         start = pygeos.get_point(link.geometry,0)
         end = pygeos.get_point(link.geometry,-1)
         from_id = nodes.id.loc[nodes.geometry==start]
         to_id = nodes.id.loc[nodes.geometry==end]
-        edges = edges.append({'osm_id':'None','geometry': link.geometry,'from_id': from_id.values[0],'to_id':to_id.values[0]},ignore_index=True)#'highway':'connector', 'maxspeed':20,'oneway': False, ' lanes': 1, 'distance':link.distance,'time':3}, ignore_index=True)
+        edges = edges.append({  'osm_id':   np.random.random_integers(1e7,1e8),
+                                'geometry': link.geometry,
+                                'from_id':  from_id.values[0],
+                                'to_id':    to_id.values[0],
+                                'highway':  'ferry_connector', 
+                                'maxspeed': 20,
+                                'oneway':   'no', 
+                                'lanes':    2
+                                },
+                                ignore_index=True)
 
-    ferry_routes = ferries(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
-  
-    for iter_,ferry in ferry_routes.iterrows():
+    # loop through ferry network to add to edges of main network
+    for iter_,ferry in ferry_network.iterrows():
         start = pygeos.get_point(ferry.geometry,0)
         end = pygeos.get_point(ferry.geometry,-1)
         from_id = nodes.id.loc[nodes.geometry==start]
         to_id = nodes.id.loc[nodes.geometry==end]
         if not from_id.empty and not to_id.empty: 
 
-            edges = edges.append({'osm_id':ferry.osm_id,'geometry':ferry.geometry,'from_id': from_id.values[0],'to_id':to_id.values[0]},ignore_index=True)#,'highway':'ferry', 'maxspeed':20,'oneway': False, ' lanes': 5}, ignore_index=True)
+            edges = edges.append({  'osm_id':   ferry.osm_id,
+                                    'geometry': ferry.geometry,
+                                    'from_id':  from_id.values[0],
+                                    'to_id':    to_id.values[0],
+                                    'highway':  'ferry', 
+                                    'maxspeed': 20,
+                                    'oneway':   'no', 
+                                    'lanes':    2},
+                                    ignore_index=True)
 
-  
+    # ensure the newly created edge network has the same order compared to the original one
+    new_edges = edges.iloc[:,:6]
+    new_edges = new_edges[[x for x in new_edges.columns if x != 'geometry']+['geometry']]            
+            
+    # create new network with ferry connections
+    net_final = simplified_network(edges)
+    
+    return net_final   
 
-    return edges, nodes    
+def connect_ferries(country,data_path,full_network,ferry_network):
+    """[summary]
 
-def connect_ferries(country):
-    # load main network
-    main_network = pd.read_feather(os.path.join(data_path,'road_networks','{}-edges.feather'.format(country)))
-    main_network_nodes = pd.read_feather(os.path.join(data_path,'road_networks','{}-nodes.feather'.format(country)))
-    main_network.geometry = pygeos.from_wkb(main_network.geometry)
-    main_network_nodes.geometry = pygeos.from_wkb(main_network_nodes.geometry)
-    # load full network
-    full_network = roads(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
-    # load ferries
-    ferry_network = ferries(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
+    Args:
+        country ([type]): [description]
+        data_path ([type]): [description]
+        full_network ([type]): [description]
+        ferry_network ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """    
+
+    # list in which we will connect new ferry connections
+
     collect_connectors = []
-    for iter_,ferry in tqdm(ferry_network.iterrows(),total=len(ferry_network)):
-        try:
-            ferry_buffer = pygeos.buffer(ferry.geometry,0.1)
-            sub_full_network = full_network.loc[pygeos.intersects(full_network.geometry,ferry_buffer)].reset_index(drop=True)
-            sub_main_network = main_network.loc[pygeos.intersects(main_network.geometry,ferry_buffer)].reset_index(drop=True)
-            sub_main_network_nodes = main_network_nodes.loc[pygeos.intersects(main_network_nodes.geometry,ferry_buffer)].reset_index(drop=True)
-            ferry_nodes = pd.DataFrame([pygeos.points(pygeos.get_coordinates(ferry.geometry)[0]),pygeos.points(pygeos.get_coordinates(ferry.geometry)[-1])],columns=['geometry'])
-            ferry_nodes['id'] = [1,2]
-            # create mini network
-            net = Network(edges=sub_full_network)
-            net = add_endpoints(net)
-            net = split_edges_at_nodes(net)
-            net = add_endpoints(net)
-            net = add_ids(net)
-            net = add_topology(net)    
-            net = add_distances(net)
-            edges = net.edges.reindex(['from_id','to_id'] + [x for x in list(net.edges.columns) if x not in ['from_id','to_id']],axis=1)
-            graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
-            sg = graph.clusters().giant()
-            nearest_node_main = nearest_network_node_list(sub_main_network_nodes,net.nodes,sg)
-            nearest_node_ferry = nearest_network_node_list(ferry_nodes,net.nodes,sg)
-            dest_nodes = [sg.vs['name'].index(nearest_node_main[x]) for x in list(nearest_node_main.keys())]
-            ferry_nodes_graph = [sg.vs['name'].index(nearest_node_ferry[x]) for x in list(nearest_node_ferry.keys())]
-            if len(ferry_nodes_graph) == 2:
-                start_node,end_node = ferry_nodes_graph
-                collect_start_paths = {}
-                for dest_node in dest_nodes:
-                    paths = sg.get_shortest_paths(sg.vs[start_node],sg.vs[dest_node],weights='distance',output="epath")
-                    if len(paths[0]) != 0:
-                        collect_start_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
+
+    # loop through all ferries
+    for iter_,ferry in (ferry_network.iterrows()):
+
+        # create buffer around ferry to get the full network around the ferry ends
+        ferry_buffer = pygeos.buffer(ferry.geometry,0.05)
+
+        # collect the road network around the ferry
+        sub_full_network = full_network.loc[pygeos.intersects(full_network.geometry,ferry_buffer)].reset_index(drop=True)
+        sub_main_network_nodes = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[1])] for x in sub_full_network.loc[sub_full_network.highway.isin(road_types)].geometry]
+        sub_main_network_nodes =  [item for sublist in sub_main_network_nodes for item in sublist]
+        sub_main_network_nodes = pd.DataFrame(sub_main_network_nodes,columns=['geometry'])
+        sub_main_network_nodes['id'] = [x+1 for x in range(len(sub_main_network_nodes))]
+
+        # create a dataframe of the ferry nodes
+        ferry_nodes = pd.DataFrame([pygeos.points(pygeos.get_coordinates(ferry.geometry)[0]),pygeos.points(pygeos.get_coordinates(ferry.geometry)[-1])],columns=['geometry'])
+        ferry_nodes['id'] = [1,2]
+
+        # create mini simplified network and graph of network around ferry
+        net = Network(edges=sub_full_network)
+        net = add_endpoints(net)
+        net = split_edges_at_nodes(net)
+        net = add_endpoints(net)
+        net = add_ids(net)
+        net = add_topology(net)    
+        net = add_distances(net)
+
+        edges = net.edges.reindex(['from_id','to_id'] + [x for x in list(net.edges.columns) if x not in ['from_id','to_id']],axis=1)
+        graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
+
+        sg = graph.copy()
+
+        # collect nearest nodes on network in graph
+        nearest_node_main = nearest_network_node_list(sub_main_network_nodes,net.nodes,sg)
+        nearest_node_ferry = nearest_network_node_list(ferry_nodes,net.nodes,sg)
+        dest_nodes = [sg.vs['name'].index(nearest_node_main[x]) for x in list(nearest_node_main.keys())]
+        ferry_nodes_graph = [sg.vs['name'].index(nearest_node_ferry[x]) for x in list(nearest_node_ferry.keys())]
+
+        # collect paths on both sides of the ferry, if both sides have an actual network nearby
+        if len(ferry_nodes_graph) == 2:
+            start_node,end_node = ferry_nodes_graph
+
+            # collect all shortest path from one side of the ferry to main network nodes
+            collect_start_paths = {}
+            for dest_node in dest_nodes:
+                paths = sg.get_shortest_paths(sg.vs[start_node],sg.vs[dest_node],weights='distance',output="epath")
                 if len(paths[0]) != 0:
-                    if len(pd.DataFrame.from_dict(collect_start_paths).T.min()) != 0:
-                        path_1 = pd.DataFrame.from_dict(collect_start_paths).T.min()[0]
-                        p_1 = []
-                        for p in path_1: 
-                            high_type = net.edges.highway.loc[net.edges.id==p].values
-                            if np.isin(high_type,road_Types): break
-                            else: p_1.append(p)
-                        path_1 = net.edges.loc[net.edges.id.isin(p_1)]
-                        if len(p_1) > 0: collect_connectors.append( pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values)))
-                collect_end_paths = {}
-                for dest_node in dest_nodes:
-                    paths = sg.get_shortest_paths(sg.vs[end_node],sg.vs[dest_node],weights='distance',output="epath")
-                    if len(paths[0]) != 0:
-                        collect_end_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
-                if len(paths[0]) != 0:
-                    if len(pd.DataFrame.from_dict(collect_start_paths).T.min()) != 0:    
-                        path_2 = pd.DataFrame.from_dict(collect_end_paths).T.min()[0]
-                        p_2 = []
-                        for p in path_2: 
-                            high_type = net.edges.highway.loc[net.edges.id==p].values
-                            if np.isin(high_type,road_Types): break
-                            else: p_2.append(p)
-                        path_2 = net.edges.loc[net.edges.id.isin(p_2)]
-                        if len(p_2) > 0: collect_connectors.append( pygeos.linear.line_merge(pygeos.multilinestrings(path_2['geometry'].values)))
-            elif len(ferry_nodes_graph) == 0:
-                continue
-            else:
-                start_node = ferry_nodes_graph[0]
-                collect_start_paths = {}
-                for dest_node in dest_nodes:
-                    paths = sg.get_shortest_paths(sg.vs[start_node],sg.vs[dest_node],weights='distance',output="epath")
-                    if len(paths[0]) != 0:
-                        collect_start_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
-                if len(paths[0]) != 0:
+                    collect_start_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
+
+            start_coords = ferry_nodes.geometry[ferry_nodes.id=={v: k for k, v in nearest_node_ferry.items()}[sg.vs[start_node]['name']]].values
+
+            # if there are paths, connect them up!
+            if len(collect_start_paths) != 0:
+                if len(pd.DataFrame.from_dict(collect_start_paths).T.min()) != 0:
                     path_1 = pd.DataFrame.from_dict(collect_start_paths).T.min()[0]
                     p_1 = []
                     for p in path_1: 
                         high_type = net.edges.highway.loc[net.edges.id==p].values
-                        if np.isin(high_type,road_Types): break
-                        else: p_1.append(p)
+                        if np.isin(high_type,road_types): 
+                            break
+                        else: 
+                            p_1.append(p)
                     path_1 = net.edges.loc[net.edges.id.isin(p_1)]
-                    if len(p_1) > 0: collect_connectors.append( pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values)))   
-            print('{} finished'.format(iter_))
-        except: print(iter_," did not work ")
+
+                    # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
+                    if len(p_1) > 0: 
+                        linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values))
+
+                        endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
+                        endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+
+                        endpoint1_distance = pygeos.distance(start_coords,endpoint1)
+                        endpoint2_distance = pygeos.distance(start_coords,endpoint2)
+
+                        if (endpoint1_distance == 0)  | (endpoint2_distance == 0):
+                            collect_connectors.append(linestring)
+                        elif endpoint1_distance < endpoint2_distance:
+                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                        else:
+                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(start_coords)),axis=0))) 
+                    else:
+                        local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_start_paths).T.min()[0])]
+                        sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                        sub_local_network =  [item for sublist in sub_local_network for item in sublist]
+                        location_closest_point = np.where(pygeos.distance(start_coords[0],sub_local_network) == np.amin(pygeos.distance(start_coords[0],sub_local_network)))[0][0]
+                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+            
+            # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
+            elif pygeos.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
+                get_new_end_point = pygeos.coordinates.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
+                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),get_new_end_point),axis=0)))
+
+            # collect all shortest path from one side of the ferry to main network nodes
+            collect_end_paths = {}
+            for dest_node in dest_nodes:
+                paths = sg.get_shortest_paths(sg.vs[end_node],sg.vs[dest_node],weights='distance',output="epath")
+                if len(paths[0]) != 0:
+                    collect_end_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
+
+            end_coords = ferry_nodes.geometry[ferry_nodes.id=={v: k for k, v in nearest_node_ferry.items()}[sg.vs[end_node]['name']]].values
+
+            # if there are paths, connect them up!
+            if len(collect_end_paths) != 0:
+                if len(pd.DataFrame.from_dict(collect_end_paths).T.min()) != 0:    
+                    path_2 = pd.DataFrame.from_dict(collect_end_paths).T.min()[0]
+                    p_2 = []
+                    for p in path_2: 
+                        high_type = net.edges.highway.loc[net.edges.id==p].values
+                        if np.isin(high_type,road_types): 
+                            break
+                        else: 
+                            p_2.append(p)
+
+                    # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
+                    path_2 = net.edges.loc[net.edges.id.isin(p_2)]
+                    if len(p_2) > 0: 
+                        linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_2['geometry'].values))
+
+                        endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
+                        endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+
+                        endpoint1_distance = pygeos.distance(end_coords,endpoint1)
+                        endpoint2_distance = pygeos.distance(end_coords,endpoint2)
+
+                        if (endpoint1_distance == 0) | (endpoint2_distance == 0):
+                            collect_connectors.append(linestring)
+                        elif endpoint1_distance < endpoint2_distance:
+                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(end_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                        else:
+                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(end_coords)),axis=0)))                    
+                    else:
+                        local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_end_paths).T.min()[0])]
+                        sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                        sub_local_network =  [item for sublist in sub_local_network for item in sublist]
+                        location_closest_point = np.where(pygeos.distance(end_coords[0],sub_local_network) == np.amin(pygeos.distance(end_coords[0],sub_local_network)))[0][0]
+                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(end_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+
+            # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
+            elif pygeos.distance(sub_main_network_nodes.geometry,end_coords).min() < 0.01:
+                get_new_end_point = pygeos.coordinates.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,end_coords).idxmin()].geometry)
+                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(end_coords),get_new_end_point),axis=0)))
+
+        # ferry is stand-alone, so we continue because there is nothing to connect
+        elif len(ferry_nodes_graph) == 0:
+            continue
+
+        # collect paths on one side  of the ferry, as other side does not have a network nearby
+        else:
+            start_node = ferry_nodes_graph[0]
+            start_coords = ferry_nodes.geometry[ferry_nodes.id=={v: k for k, v in nearest_node_ferry.items()}[sg.vs[start_node]['name']]].values
+
+            # collect all shortest path from one side of the ferry to main network nodes
+            collect_start_paths = {}
+            for dest_node in dest_nodes:
+                paths = sg.get_shortest_paths(sg.vs[start_node],sg.vs[dest_node],weights='distance',output="epath")
+                if len(paths[0]) != 0:
+                    collect_start_paths[dest_node] = sg.es[paths[0]]['id'],np.sum(sg.es[paths[0]]['distance'])
+ 
+            # if there are paths, connect them up!
+            if len(collect_start_paths) != 0:
+                path_1 = pd.DataFrame.from_dict(collect_start_paths).T.min()[0]
+                p_1 = []
+                for p in path_1: 
+                    high_type = net.edges.highway.loc[net.edges.id==p].values
+                    if np.isin(high_type,road_types): break
+                    else: p_1.append(p)
+                path_1 = net.edges.loc[net.edges.id.isin(p_1)]
+
+                # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
+                if len(p_1) > 0: 
+                    linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values))
+
+                    endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
+                    endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+
+                    endpoint1_distance = pygeos.distance(start_coords,endpoint1)
+                    endpoint2_distance = pygeos.distance(start_coords,endpoint2)
+
+                    if (endpoint1_distance == 0) | (endpoint2_distance == 0):
+                        collect_connectors.append(linestring)
+                    elif endpoint1_distance < endpoint2_distance:
+                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                    else:
+                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(start_coords)),axis=0)))            
+                else:
+                    local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_start_paths).T.min()[0])]
+                    sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                    sub_local_network =  [item for sublist in sub_local_network for item in sublist]
+                    location_closest_point = np.where(pygeos.distance(start_coords[0],sub_local_network) == np.amin(pygeos.distance(start_coords[0],sub_local_network)))[0][0]
+                    collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+
+            # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
+            elif pygeos.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
+                get_new_end_point = pygeos.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
+                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),get_new_end_point),axis=0)))
+    
     return pd.DataFrame(collect_connectors,columns=['geometry'])
 
 
-def add_modal(network,alter_transport,threshold=0.02):
-    """
-    Designed with the addition of ferries in mind, to snap eligible routes onto existing network
-    with special logic for loading unloading, left after other methods to protect from merge
-    splitting and dropping logic. keeps these edges seperate from road simplification. only issue
-    is the snapping threshold needs to be more forgiving as often nearest nodes have been merged away
-    worth looking at edge finding in some cases. also seems to be a good idea to 
-    ferries will have their own time calculation method 
+# def add_modal(network,alter_transport,threshold=0.02):
+#     """
+#     Designed with the addition of ferries in mind, to snap eligible routes onto existing network
+#     with special logic for loading unloading, left after other methods to protect from merge
+#     splitting and dropping logic. keeps these edges seperate from road simplification. only issue
+#     is the snapping threshold needs to be more forgiving as often nearest nodes have been merged away
+#     worth looking at edge finding in some cases. also seems to be a good idea to 
+#     ferries will have their own time calculation method 
 
-    Args:
-        network (class): A network composed of nodes (points in space) and edges (lines)
-        alter_transport ([type]): [description]
-        threshold (float, optional): [description]. Defaults to 0.02.
+#     Args:
+#         network (class): A network composed of nodes (points in space) and edges (lines)
+#         alter_transport ([type]): [description]
+#         threshold (float, optional): [description]. Defaults to 0.02.
 
-    Returns:
-        network (class): A network composed of nodes (points in space) and edges (lines)
+#     Returns:
+#         network (class): A network composed of nodes (points in space) and edges (lines)
 
-    """    
-    edges = network.edges.copy()
-    nodes = network.nodes.copy()
-    node_degree = nodes.degree.to_numpy()
-    sindex_nodes = pygeos.STRtree(nodes['geometry'])
-    sindex_edges = pygeos.STRtree(edges['geometry'])
-    new_edges = []
-    edge_id_counter = len(edges)
-    counter = 0
-    for route in alter_transport.itertuples():
-        route_geom = route.geometry
-        start = pygeom.get_point(route_geom,0)
-        end = pygeom.get_point(route_geom,-1)
+#     """    
+#     nodes = network.nodes.copy() 
+#     edges = network.edges.copy()  
+#     node_degree = nodes.degree.to_numpy()
+#     sindex_nodes = pygeos.STRtree(nodes['geometry'])
+#     sindex_edges = pygeos.STRtree(edges['geometry'])
+#     new_edges = []
+#     edge_id_counter = len(edges)
+#     counter = 0
+#     for route in alter_transport.itertuples():
+#         route_geom = route.geometry
+#         start = pygeom.get_point(route_geom,0)
+#         end = pygeom.get_point(route_geom,-1)
 
-        near_start = _intersects(start,edges['geometry'],sindex_edges, tolerance=threshold)
-        near_end = _intersects(end,edges['geometry'],sindex_edges, tolerance=threshold)
-        near_start = near_start.index.values
-        near_end = near_end.index.values
-        print(near_end)
-        print(near_start)
-        if len(near_start) < 1 or len(near_end) < 1: continue
+#         near_start = _intersects(start,edges['geometry'],sindex_edges, tolerance=threshold)
+#         near_end = _intersects(end,edges['geometry'],sindex_edges, tolerance=threshold)
+#         near_start = near_start.index.values
+#         near_end = near_end.index.values
+#         print(near_end)
+#         print(near_start)
+#         if len(near_start) < 1 or len(near_end) < 1: continue
 
-        if len(near_start) > 1: 
-            near_start = min([edges.iloc[match_idx] for match_idx in near_start],
-                key=lambda match: pygeos.distance(start,match.geometry))
-            near_start = near_start.id
+#         if len(near_start) > 1: 
+#             near_start = min([edges.iloc[match_idx] for match_idx in near_start],
+#                 key=lambda match: pygeos.distance(start,match.geometry))
+#             near_start = near_start.id
 
-        else: near_start = edges.id.iloc[near_start[0]]
-        if len(near_end) > 1: 
-            near_end = min([edges.iloc[match_idx] for match_idx in near_end],
-                key=lambda match: pygeos.distance(end,match.geometry))
-            near_end=near_end.id
-        else: near_end = edges.id.iloc[near_end[0]]
-        if near_end==near_start: 
-            print("for counter ", counter, "we skipped")
-            continue
-        #pick nodes to create edge
-        near_start = edges.iloc[near_start]
-        near_end = edges.iloc[near_end]
-        new_line_start = pygeos.coordinates.get_coordinates(route_geom)
+#         else: near_start = edges.id.iloc[near_start[0]]
+#         if len(near_end) > 1: 
+#             near_end = min([edges.iloc[match_idx] for match_idx in near_end],
+#                 key=lambda match: pygeos.distance(end,match.geometry))
+#             near_end=near_end.id
+#         else: near_end = edges.id.iloc[near_end[0]]
+#         if near_end==near_start: 
+#             print("for counter ", counter, "we skipped")
+#             continue
+#         #pick nodes to create edge
+#         near_start = edges.iloc[near_start]
+#         near_end = edges.iloc[near_end]
+#         new_line_start = pygeos.coordinates.get_coordinates(route_geom)
 
-        from_is_closer = pygeos.measurement.distance(start, nodes.iloc[near_start.from_id].geometry) < pygeos.measurement.distance(start, nodes.iloc[near_start.to_id].geometry)
-        if from_is_closer:
-            start_id = near_start.from_id
-        else:
-            start_id = near_start.to_id
-        node_degree[start_id] += 1
-        new_line = np.concatenate((pygeos.coordinates.get_coordinates(nodes.iloc[start_id].geometry),new_line_start))
-        from_is_closer = pygeos.measurement.distance(end, nodes.iloc[near_end.from_id].geometry) < pygeos.measurement.distance(end, nodes.iloc[near_end.to_id].geometry)
-        if from_is_closer:
-            end_id = near_end.from_id
-        else:
-            end_id = near_end.to_id
-        node_degree[end_id] += 1
-        new_line = np.concatenate((new_line,pygeos.coordinates.get_coordinates(nodes.iloc[end_id].geometry)))
-        new_edges.append({'osm_id':route.osm_id,'geometry': pygeos.linestrings(new_line),'highway':route.highway,'id':edge_id_counter,'from_id':start_id,'to_id':end_id,'distance':999,'time':999})
+#         from_is_closer = pygeos.measurement.distance(start, nodes.iloc[near_start.from_id].geometry) < pygeos.measurement.distance(start, nodes.iloc[near_start.to_id].geometry)
+#         if from_is_closer:
+#             start_id = near_start.from_id
+#         else:
+#             start_id = near_start.to_id
+#         node_degree[start_id] += 1
+#         new_line = np.concatenate((pygeos.coordinates.get_coordinates(nodes.iloc[start_id].geometry),new_line_start))
+#         from_is_closer = pygeos.measurement.distance(end, nodes.iloc[near_end.from_id].geometry) < pygeos.measurement.distance(end, nodes.iloc[near_end.to_id].geometry)
+#         if from_is_closer:
+#             end_id = near_end.from_id
+#         else:
+#             end_id = near_end.to_id
+#         node_degree[end_id] += 1
+#         new_line = np.concatenate((new_line,pygeos.coordinates.get_coordinates(nodes.iloc[end_id].geometry)))
+#         new_edges.append({'osm_id':route.osm_id,'geometry': pygeos.linestrings(new_line),'highway':route.highway,'id':edge_id_counter,'from_id':start_id,'to_id':end_id,'distance':999,'time':999})
 
-        counter+=1
+#         counter+=1
         
-    edges = edges.append(new_edges,ignore_index=True)
-    edges.reset_index(inplace=True)
-    return Network(edges = edges, nodes=nodes)
-
-def logicCheck(net):
-    nodes = net.nodes.copy()
-    edges = net.edges.copy()
-
-    indexRef=False
-    eID = []
-    nID = []
-    if max(edges.from_id) > max(nodes.id) or max(edges.to_id) > max(nodes.id):
-        print("ERROR: From or to id out of index")
-        print("max node id: ", max(nodes.id))
-        print("max from id: ", max(edges.from_id))
-        print("max to id: ", max(edges.to_id))
-
-    cur_deg = nodes['degree'].to_numpy()
-    cal_deg = ['1','2']
-    try:
-        cal_deg = calculate_degree(net)
-    except: print("ERROR: Degree could not be calculated from from and to ids")
-
-    if not np.array_equal(cur_deg,cal_deg): print("Final node degree values do not correspond to edge dataframe")
-
-    bugs = net.edges.loc[edges.id.isin(eID)]
-    bugN = net.nodes.loc[nodes.id.isin(nID)]
-
-    try:
-        with Geopackage('bugs.gpkg', 'w') as out:
-            out.add_layer(net.edges, name='ed', crs='EPSG:4326')
-            out.add_layer(net.nodes,name='no',crs='EPSG:4326')
-    except:
-        print("ERROR: Saving as geopackage did not work. Check if package is correctly installed and/or if geometries all all the same type")
-
-def findMulti(net):
-    edges = net.edges.copy()
-    multi = []
-    for edge in edges.itertuples():
-        if pygeom.get_type_id(edge.geometry) == '5':
-            multi.append(edge.id)
-    line = edges.loc[~edges.id.isin(multi)]
-    multiline = edges.loc[edges.id.isin(multi)]
-    #try:
-     #   with Geopackage('multi.gpkg', 'w') as out:
-      #      out.add_layer(line, name='l', crs='EPSG:4326')
-            #out.add_layer(multiline,name='m',crs='EPSG:4326')
-    #except: 
-    print(len(multi), " multilines found")
-
-def quickFix(net):
-    edges = net.edges.copy()
-    a = []
-    rem = []
-    for edge in edges.itertuples():
-        if not pygeos.get_num_geometries(edge.geometry) == 1:
-            b = pygeos.get_num_geometries(edge.geometry)
-            print("Multiple geometries in edge id: ", edge.id)
-            for x in range(b):
-                a.append(pygeom.get_geometry(edge.geometry,x)) 
-           
-            rem.append(edge.id)
-        if edge.from_id > max(net.nodes.id) or edge.to_id > max(net.nodes.id):
-            rem.append(edge.id)
-    edges = edges.loc[~edges.id.isin(rem)]
-    edges['id'] = range(len(edges))
-    edges.reset_index(drop=True,inplace=True)
-    #a should have the individual linestrings in it 
-    return Network(edges=edges,nodes=net.nodes)
-
-#Creates an igraph from geodataframe with the distances as weights. 
-def igraph_from_df(df):
-    net = simplify_network_from_df(df)
-    g = ig.Graph.TupleList(net.edges[['from_id','to_id','distance']].itertuples(index=False))
-    #layout = g.layout("kk")
-    #ig.plot(g, layout=layout)
-    return g
-
-def subsection(network):
-    e = network
-    return d_within(e.iloc[221].geometry, e, 0.03)
-
+#     edges = edges.append(new_edges,ignore_index=True)
+#     edges.reset_index(inplace=True)
+#     return Network(edges = edges, nodes=nodes)
