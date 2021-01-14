@@ -1,26 +1,26 @@
 import os,sys
 import igraph as ig
 import numpy as np
-from timeit import default_timer as timer
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import plotly.offline as py
-from plotly.graph_objs import *
 import math
 import random
 import matplotlib.pyplot as plt
 import feather
-
 import pandas as pd
 import pygeos as pyg
 
+from timeit import default_timer as timer
+from tqdm import tqdm
+from pathlib import Path
+from plotly.graph_objs import *
 
 from numpy import inf
 
 #from pgpkg import Geopackage
 from numpy.ma import masked
-import pathlib
-data_path = os.path.join((pathlib.Path(__file__).resolve().parents[2]),'data','percolation')
+
+data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
 
 from pathos.multiprocessing import Pool,cpu_count
 from itertools import repeat
@@ -300,8 +300,8 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     tot_edge_time = np.sum(g.es['time'])
 
     while trips_possible:
-        if frac_counter > 0.2 and frac_counter <= 0.4: del_frac = 0.02
-        if frac_counter > 0.4: del_frac = 0.05
+        if frac_counter > 0.3 and frac_counter <= 0.5: del_frac = 0.02
+        if frac_counter > 0.5: del_frac = 0.05
         exp_edge_no = exp_g.ecount()
         #The number of edges to delete
         no_edge_del = math.floor(del_frac * edge_no)
@@ -473,7 +473,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     return frac_counter, pct_isolated, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
-def run_percolation_cluster(x,run_no=200):
+def run_percolation_cluster(x,run_no=500):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -484,8 +484,11 @@ def run_percolation_cluster(x,run_no=200):
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
 
+    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    data_path = Path(r'C:/data/')
+
     #get all networks for a country
-    get_all_networks = [y[4] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/") if (y.startswith(x) & y.endswith('-edges.feather'))]
+    get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(x) & y.name.endswith('-edges.feather'))]
 
     for network in get_all_networks:
         try:
@@ -493,19 +496,19 @@ def run_percolation_cluster(x,run_no=200):
     #all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
             country = x
 
-            if os.path.isfile("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv"):
+            if data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)).is_file():
                 print(country+' '+network+" already finished!")           
                 continue
             
             print(country+' '+network+" started!")
-            all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
+            all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
             gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-            edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-edges.feather")
-            nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+network+"-nodes.feather")
+            edges = feather.read_dataframe(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
+            nodes = feather.read_dataframe(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
             nodes.geometry = pyg.from_wkb(nodes.geometry)
 
             # Each country has a set of centroids of grid cells with populations for each cell
-            possibleOD = pd.read_csv(open("/scistor/ivm/data_catalogue/open_street_map/country_OD_points/"+x+".csv"))
+            possibleOD = pd.read_csv(open(data_path.joinpath("country_OD_points","{}.csv".format(x))))
             grid_height = possibleOD.grid_height.iloc[2]
             #radius of circle to cover entire box,  pythagorus theorem
             h = np.sqrt(((grid_height)**2) *2)
@@ -525,7 +528,8 @@ def run_percolation_cluster(x,run_no=200):
                 results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
             
             res = pd.concat(results)
-            res.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_results/"+country+"_"+network+"_results.csv")
+            res.to_csv(data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)))
+
         except Exception as e: 
             print(country+' '+network+" failed because of {}".format(e))
 
@@ -564,26 +568,6 @@ def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
         OD_nodes, populations = choose_OD(OD_pos, OD_no)
         results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
     
-
-    # list_ois = []
-    # list_pos = []
-
-    # for x in tqdm(range(run_no),total=run_no):
-    #     oi, po = choose_OD(OD_pos, OD_no)
-    #     list_ois.append(oi)
-    #     list_pos.append(po)
-
-    # edges.geometry = pyg.to_wkb((edges.geometry))
-
-    # with Pool(cpu_count()-1) as pool: 
-    #       results = pool.starmap(percolation_Final,zip(repeat(edges,run_no),
-    #                                                         repeat(0.01,run_no),
-    #                                                         list_ois,
-    #                                                         list_pos,
-    #                                                         repeat(gdp,run_no)),
-    #                                                         chunksize=1) 
-
-
     return pd.concat(results)
 
 def reset_ids(edges, nodes):
@@ -621,332 +605,15 @@ def reset_ids(edges, nodes):
     nodes.reset_index(drop=True,inplace=True)
     return edges,nodes
 
-
-#
-#       LEGACY METHODS
-#
-
-#Del frac is now a fraction of total edge length rather than of number of edges
-def percolation_by_length(graph, OD_nodes, del_frac,isolated_threshold=2.5):
-    """[summary]
-
-    Args:
-        graph ([type]): [description]
-        OD_nodes ([type]): [description]
-        del_frac ([type]): [description]
-        isolated_threshold (float, optional): [description]. Defaults to 2.5.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = graph
- 
-    interval_no = 2
-    edge_no = g.ecount() #10
-    OD_node_no = len(OD_nodes)
-    print("Number of Edges: ",edge_no)
-    #larg = graph.clusters().giant()
-    #print(larg.ecount())
-    intervals = np.arange(0.01,1,0.2)
-    tot_edge_length = np.sum(g.es['distance'])
-    
-    base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-    OD_orig = np.matrix(base_shortest_paths)
-    #print(OD_orig)
-    isolated_threshold = isolated_threshold
-    #If the graph is fully connnected this is the number of possible trips
-    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
-    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
-    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
-    #consider passing a fully connected graph or ensure OD are part of giant component
-    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
-    pos_trip_no = theo_pos_trip_no - imp_trips
-    #print(pos_trip_no)
-    
-    OD_thresh = OD_orig*isolated_threshold
-    del_frac = del_frac
-    exp_g = g.copy()
-    #print(OD_thresh)
-    trips_possible = True
-    counter = 0
-    counterMax = 1/del_frac
-    thresh = del_frac*tot_edge_length
-    over_thresh_no = 0
-
-    isolated_trip_results = [0]
-    while trips_possible:
-        exp_edge_no = exp_g.ecount()
-        if exp_edge_no < 1: break
-        edges_del =  random.randint(0,exp_edge_no-1)
-        exp_g.delete_edges(edges_del)
-        if(tot_edge_length-np.sum(exp_g.es['distance'])>thresh):
-            new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-            perc_matrix = np.matrix(new_shortest_paths)
-            result = simple_OD_calc(perc_matrix, OD_thresh, pos_trip_no)    
-            isolated_trip_results.append(result)
-            thresh += del_frac*tot_edge_length
-            counter += 1
-        if over_thresh_no >= pos_trip_no: break
- 
-        #showMore(exp_g)
-        
-        #if counter > counterMax: break
-    
-    x_ax = []
-    frac_inc = 0
-    for i in isolated_trip_results:
-        x_ax.append(frac_inc)
-        frac_inc += del_frac
-
-    return x_ax,isolated_trip_results
-
-def show(graph):
-    """Simple 
-
-    Args:
-        graph ([type]): [description]
-    """    
-    g = graph
-    layout = g.layout("kk")
-    ig.plot(g, layout=layout)
-
-def convert_nx(graph):
-    """[summary]
-
-    Args:
-        graph ([type]): [description]
-    """    
-    g = graph
-    A = g.get_edgelist()
-    print(nx.Graph(A))
-
-def graph_example():
-    nodes = range(8)
-    OD_nodes = [1,2,3,7]
-    ed_id =   [0,1,2,3,4,5,6,7,8,9]
-    ed_from = [0,1,4,5,2,2,0,1,6,7]
-    ed_to =   [1,3,3,0,1,3,4,6,7,2]
-    ed_dist = [4,3,2,5,6,7,6,1,1.5,2]
-    dict = {'from_id':ed_from,'to_id':ed_to,'distance':ed_dist}
-    edges = pd.DataFrame(dict)
-    print(edges)
-
-    zippy = zip(edges['from_id'],edges['to_id'])
-    g = ig.Graph(directed=False)
-    g.add_vertices(len(nodes))
-    g.vs['name'] = nodes
-    g.add_edges(zippy)
-    g.es['distance'] = ed_dist
-
-    #intervals = np.arange(0.01,1,0.2)
-    del_frac = 0.2
-    percolation_by_length(g, OD_nodes,del_frac)
-
-#https://plotly.com/python/v3/igraph-networkx-comparison/
-def showMore(graph):
-    """[summary]
-
-    Args:
-        graph ([type]): [description]
-    """    
-    g = graph
-  
-    layt=g.layout('kk')
-    N = g.vcount()
-    labels = list(g.vs['id'])
-    E = [e.tuple for e in g.es]
-    Xn=[layt[k][0] for k in range(N)]
-    Yn=[layt[k][1] for k in range(N)]
-    Xe=[]
-    Ye=[]
-    for e in E:
-        Xe+=[layt[e[0]][0],layt[e[1]][0], None]
-        Ye+=[layt[e[0]][1],layt[e[1]][1], None]
-
-    trace1=Scatter(x=Xe,
-                   y=Ye,
-                   mode='lines',
-                   line= dict(color='rgb(210,210,210)', width=1),
-                   hoverinfo='none'
-                   )
-    trace2=Scatter(x=Xn,
-                   y=Yn,
-                   mode='markers',
-                   name='ntw',
-                   marker=dict(symbol='circle-dot',
-                                            size=5,
-                                            color='#6959CD',
-                                            line=dict(color='rgb(50,50,50)', width=0.5)
-                                            ),
-                   text=labels,
-                   hoverinfo='text'
-                   )
-
-    axis=dict(showline=False, # hide axis line, grid, ticklabels and  title
-              zeroline=False,
-              showgrid=False,
-              showticklabels=False,
-              title=''
-              )
-
-    width=800
-    height=800
-    layout=Layout(title= "Closer look at network",
-        font= dict(size=12),
-        showlegend=False,
-        autosize=False,
-        width=width,
-        height=height,
-        hovermode='closest',
-        annotations=[
-               dict(
-               showarrow=False,
-                text='This igraph.Graph has the Kamada-Kawai layout',
-                xref='paper',
-                yref='paper',
-                x=0,
-                y=-0.1,
-                xanchor='left',
-                yanchor='bottom',
-                font=dict(
-                size=14
-                )
-                )
-            ]
-        )
-
-    data=[trace1, trace2]
-    fig=Figure(data=data, layout=layout)
-    py.iplot(fig, filename='network-igraph')
-    
-'''
-LEGACY METHODS, MAY BE DELETED SOON
-def alt(edges, isolated_threshold=3, OD_no = 100, del_frac=0.02):
-    """[summary]
-
-    Args:
-        edges ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 3.
-        OD_no (int, optional): [description]. Defaults to 100.
-        del_frac (float, optional): [description]. Defaults to 0.02.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = ig.Graph(directed=False)
-    max_node_id = max(max(edges.from_id),max(edges.to_id))
-    g.add_vertices(max_node_id+1)
-    zippy = zip(edges.from_id,edges.to_id)
-    g.add_edges(zippy)
-    g.es['distance'] = edges.distance
-    randomOD = random.sample(range(g.vcount()-1),OD_no)
-    return percolation(g,randomOD,del_frac, isolated_threshold)
-
-def edge_to_perc(edges, isolated_threshold = 3, OD_no=100, del_frac=0.02):
-    """[summary]
-
-    Args:
-        edges ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 3.
-        OD_no (int, optional): [description]. Defaults to 100.
-        del_frac (float, optional): [description]. Defaults to 0.02.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = ig.Graph(directed=False)
-    max_node_id = max(max(edges.from_id),max(edges.to_id))
-    g.add_vertices(max_node_id+1)
-    zippy = zip(edges.from_id,edges.to_id)
-    g.add_edges(zippy)
-    g.es['distance'] = edges.distance
-    randomOD = random.sample(range(g.vcount()-1),OD_no)
-    return percolation_by_length(g,randomOD,del_frac, isolated_threshold)
-
-
-def percolation(graph, OD_nodes, del_frac, isolated_threshold=2):
-    """[summary]
-
-    Args:
-        graph ([type]): [description]
-        OD_nodes ([type]): [description]
-        del_frac ([type]): [description]
-        isolated_threshold (int, optional): [description]. Defaults to 2.
-
-    Returns:
-        [type]: [description]
-    """    
-    g = graph
- 
-    interval_no = 2
-    edge_no = g.ecount() #10
-    OD_node_no = len(OD_nodes)
-    print("Number of Edges: ",edge_no)
-    intervals = np.arange(0.01,1,0.2)
-
-    base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-    OD_orig = np.matrix(base_shortest_paths)
-    #print(OD_orig)
-    isolated_threshold = isolated_threshold
-    #If the graph is fully connnected this is the number of possible trips
-    theo_pos_trip_no = ((OD_node_no**2) - OD_node_no) / 2
-    #counts the trips that are not possible before percolation, this shouldn't happen if a fully connected graph is passed
-    imp_trips = (np.count_nonzero(np.isinf(OD_orig)))/2
-    #consider passing a fully connected graph or ensure OD are part of giant component
-    if imp_trips > 0: print(imp_trips," trips were not possible in the OD matrix")
-    pos_trip_no = theo_pos_trip_no - imp_trips
-    #print(pos_trip_no)
-    
-    OD_thresh = OD_orig*isolated_threshold
-    del_frac = del_frac
-    exp_g = g.copy()
-    #print(OD_thresh)
-    trips_possible = True
-    counter = 0
-    counterMax = 1/del_frac
-    #showMore(exp_g)
-    isolated_trip_results = [0]
-    while trips_possible:
-        exp_edge_no = exp_g.ecount()
-        no_edge_del = math.floor(del_frac * edge_no)
-        try:
-            edges_del = random.sample(range(exp_edge_no),no_edge_del)
-        except:
-            print("random sample playing up but its ok")
-            edges_del = range(exp_edge_no)
-        exp_g.delete_edges(edges_del)
-        new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='distance')
-        perc_matrix = np.matrix(new_shortest_paths)
-        result = simple_OD_calc(perc_matrix, OD_thresh, pos_trip_no)    
-        isolated_trip_results.append(result)
-        if result >= 1: break
- 
-        #showMore(exp_g)
-        counter += 1
-        if counter > counterMax: break
-    
-    x_ax = []
-    frac_inc = 0
-    for i in isolated_trip_results:
-        x_ax.append(frac_inc)
-        frac_inc += del_frac
-
-    return x_ax,isolated_trip_results
-
-    plt.plot(x_ax,isolated_trip_results)
-    plt.ylabel("Isolated Trips")
-    plt.title("Simple percolation")
-    plt.xlabel("Percentage of edges destroyed")
-    plt.show()
-    print(isolated_trip_results)
-'''
-
-def split_record(x):
+def get_metrics_and_split(x):
     
     try:
+        #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+        data_path = Path(r'C:/data/')
+
         print(x+' has started!')
-        edges = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather")
-        nodes = feather.read_dataframe("/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-nodes.feather")
+        edges = feather.read_dataframe(data_path.joinpath("road_networks","{}-edges.feather".format(x)))
+        nodes = feather.read_dataframe(data_path.joinpath("road_networks","{}-nodes.feather".format(x)))
  
         edges = edges.drop('geometry',axis=1)
         edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
@@ -961,7 +628,7 @@ def split_record(x):
         # graph.es['id'] = edges['id']
         # graph.es['distance'] = edges.distance
         all_df = metrics(graph)
-        all_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_all_metrics.csv")
+        all_df.to_csv(data_path.joinpath("percolation_metrics","{}_all_metrics.csv".format(x)))
 
 
         cluster_sizes = graph.clusters().sizes()
@@ -970,12 +637,12 @@ def split_record(x):
 
         main_cluster = graph.clusters().giant()
         main_df = metrics(main_cluster)
-        main_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_0_metrics.csv")
+        main_df.to_csv(data_path.joinpath("percolation_metrics","{}_0_metrics.csv".format(x)))
         main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
         main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
         main_edges, main_nodes = reset_ids(main_edges,main_nodes)
-        feather.write_dataframe(main_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-edges.feather")
-        feather.write_dataframe(main_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_0-nodes.feather")
+        feather.write_dataframe(main_edges,data_path.joinpath("percolation_networks","{}_0-edges.feather".format(x)))
+        feather.write_dataframe(main_nodes,data_path.joinpath("percolation_networks","{}_0-nodes.feather".format(x)))
         skipped_giant = False
 
         counter = 1
@@ -989,8 +656,8 @@ def split_record(x):
             g_edges = edges.loc[edges.id.isin(g.es()['id'])]
             g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
             g_edges, g_nodes = reset_ids(g_edges,g_nodes)
-            feather.write_dataframe(g_edges,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-edges.feather")
-            feather.write_dataframe(g_nodes,"/scistor/ivm/data_catalogue/open_street_map/percolation_networks/"+x+"_"+str(counter)+"-nodes.feather")
+            feather.write_dataframe(main_edges,data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(x,str(counter))))
+            feather.write_dataframe(main_nodes,data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(x,str(counter))))
             g_df = metrics(g)
             g_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_"+str(counter)+"_metrics.csv")
             counter += 1
@@ -1000,16 +667,21 @@ def split_record(x):
         print(x+" failed because of {}".format(e))
 
 if __name__ == '__main__':     
+
+    data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
+    #data_path = Path(r'C:/data/')
+
     #countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES', 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
     #countries is without CHN, DEU, RUS, USA
-    countries = [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/road_networks/")]
-    fin_countries =  [y[:3] for y in os.listdir("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/")]
+    countries = [y.name[:3] for y in data_path.joinpath('road_networks').iterdir()]
+    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_metrics').iterdir()]
     left_countries = list(set(countries)-set(fin_countries))
     left_countries = [x[:3] for x in left_countries]
     from random import shuffle
     #shuffle(left_countries)
-    #left_countries = ['BRB', 'BTN', 'KNA', 'GUY', 'NFK', 'BLZ', 'WLF', 'SHN', 'WSM', 'KIR', 'MCO', 'VUT', 'TUV', 'XAD','ASM','FSM','MHL','PLW','VGB','MDV','SLB','VCT']
+    #left_countries = ['BRB', 'BTN', 'KNA', 'GUY', 'NFK', 'BLZ', 'WLF', 'SHN', 'WSM', 'KIR', 'MCO', 'VUT', 'TUV', 'XAD','ASM','FSM','MHL','PLW','VGB','MDV','SLB','VCT']\
+    left_countries=['GRL']
     print(left_countries)
 
     with Pool(10) as pool: 
-        pool.map(split_record,left_countries,chunksize=1)   
+        pool.map(run_percolation_cluster,left_countries,chunksize=1)   

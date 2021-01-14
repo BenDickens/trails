@@ -42,8 +42,10 @@ if __name__ == '__main__':
             print(x + " is done")
             #x_ax, isolated_trip_results = net.alt(a)
     
-    with Pool(processes=cpu_count()-4) as pool: 
-         pool.map(simp,countries,chunksize=1)
+    country = 'AFR'
+    net_final = simply.ferry_connected_network(country,data_path)
+    #with Pool(processes=cpu_count()-4) as pool: 
+    #     pool.map(simp,countries,chunksize=1)
 
 
 # data_path = "/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather"

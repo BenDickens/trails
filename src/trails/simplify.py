@@ -26,17 +26,20 @@ from pandas import DataFrame
 from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
 from shapely.ops import split, linemerge
 from tqdm import tqdm
+from pathlib import Path
 
 # path to python scripts
 sys.path.append(os.path.join('..','src','trails'))
+
 from flow_model import *
 from simplify import *
 from extract import railway,ferries,mainRoads,roads
 import pathlib
 pd.options.mode.chained_assignment = None  
 #data_path = os.path.join('..','data')
-data_path = (pathlib.Path(__file__).parent.absolute().parent.absolute().parent.absolute())
-data_path = os.path.join(data_path,'data')
+data_path = (Path(__file__).parent.absolute().parent.absolute().parent.absolute())
+
+data_path = Path(r'C:/data/')
 road_types = ['primary','trunk','motorway','motorway_link','trunk_link','primary_link','secondary','secondary_link','tertiary','tertiary_link']
 
 from utils import tqdm_standin as tqdm
@@ -1413,7 +1416,7 @@ def fill_attributes(network):
     
     return network   
 
-def simplified_network(df,drop_hanging_nodes_run=True):
+def simplified_network(df,drop_hanging_nodes_run=True,fill_attributes_run=True):
     """returns a geopandas dataframe of a simplified network
 
     Args:
@@ -1436,11 +1439,13 @@ def simplified_network(df,drop_hanging_nodes_run=True):
          net.nodes['degree'] = calculate_degree(net)
             
     net = merge_edges(net)
+    net.edges = drop_duplicate_geometries(net.edges, keep='first') 
     net = reset_ids(net) 
     net = add_distances(net)
     net = merge_multilinestrings(net)
-    net = fill_attributes(net)
-    net = add_travel_time(net)    
+    if fill_attributes_run:
+        net = fill_attributes(net)
+    net = add_travel_time(net)   
     return net   
 
 def ferry_connected_network(country,data_path):
@@ -1455,18 +1460,18 @@ def ferry_connected_network(country,data_path):
         [type]: [description]
     """
     # load full network
-    full_network = roads(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
+    full_network = roads(str(data_path.joinpath('country_osm','{}.osm.pbf'.format(country))))
     main_road_network = full_network.loc[full_network.highway.isin(road_types)].reset_index(drop=True)
     
     # load ferries
-    ferry_network = ferries(os.path.join(data_path,'country_osm','{}.osm.pbf'.format(country)))
+    ferry_network = ferries(str(data_path.joinpath('country_osm','{}.osm.pbf'.format(country))))
     
     # create a main network where hanging nodes are not removed
     network_with_hanging = simplified_network(main_road_network,drop_hanging_nodes_run=False)
     nodes,edges = network_with_hanging.nodes.copy(),network_with_hanging.edges.copy()
     
     # create connections between ferry network and the main network
-    connectors = connect_ferries(country,data_path,full_network,ferry_network)
+    connectors = connect_ferries(country,full_network,ferry_network)
    
 
     # loop through ferry connectors to add to edges of main network
@@ -1477,13 +1482,10 @@ def ferry_connected_network(country,data_path):
         to_id = nodes.id.loc[nodes.geometry==end]
         edges = edges.append({  'osm_id':   np.random.random_integers(1e7,1e8),
                                 'geometry': link.geometry,
-                                'from_id':  from_id.values[0],
-                                'to_id':    to_id.values[0],
                                 'highway':  'ferry_connector', 
-                                'maxspeed': 20,
+                                'maxspeed': 10,
                                 'oneway':   'no', 
-                                'lanes':    2
-                                },
+                                'lanes':    2},
                                 ignore_index=True)
 
     # loop through ferry network to add to edges of main network
@@ -1492,12 +1494,10 @@ def ferry_connected_network(country,data_path):
         end = pygeos.get_point(ferry.geometry,-1)
         from_id = nodes.id.loc[nodes.geometry==start]
         to_id = nodes.id.loc[nodes.geometry==end]
-        if not from_id.empty and not to_id.empty: 
+        #if not from_id.empty and not to_id.empty: 
 
-            edges = edges.append({  'osm_id':   ferry.osm_id,
+        edges = edges.append({  'osm_id':   ferry.osm_id,
                                     'geometry': ferry.geometry,
-                                    'from_id':  from_id.values[0],
-                                    'to_id':    to_id.values[0],
                                     'highway':  'ferry', 
                                     'maxspeed': 20,
                                     'oneway':   'no', 
@@ -1509,16 +1509,24 @@ def ferry_connected_network(country,data_path):
     new_edges = new_edges[[x for x in new_edges.columns if x != 'geometry']+['geometry']]            
             
     # create new network with ferry connections
-    net_final = simplified_network(edges)
+    net_final = simplified_network(new_edges,fill_attributes_run=False)
+
+    net_final.edges.osm_id = net_final.edges.osm_id.astype(int)
+    net_final.edges.geometry = pygeos.to_wkb(net_final.edges.geometry)
+    net_final.nodes.geometry = pygeos.to_wkb(net_final.nodes.geometry)
+
+    
+    feather.write_dataframe(net_final.edges.copy(),data_path.joinpath('road_ferry_networks','{}-edges.feather'.format(country)))
+    feather.write_dataframe(net_final.nodes.copy(),data_path.joinpath('road_ferry_networks','{}-nodes.feather'.format(country)))    
     
     return net_final   
 
-def connect_ferries(country,data_path,full_network,ferry_network):
+    
+def connect_ferries(country,full_network,ferry_network):
     """[summary]
 
     Args:
         country ([type]): [description]
-        data_path ([type]): [description]
         full_network ([type]): [description]
         ferry_network ([type]): [description]
 
