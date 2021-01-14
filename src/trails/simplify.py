@@ -42,8 +42,6 @@ data_path = (Path(__file__).parent.absolute().parent.absolute().parent.absolute(
 data_path = Path(r'C:/data/')
 road_types = ['primary','trunk','motorway','motorway_link','trunk_link','primary_link','secondary','secondary_link','tertiary','tertiary_link']
 
-from utils import tqdm_standin as tqdm
-
 # optional progress bars
 '''
 if 'SNKIT_PROGRESS' in os.environ and os.environ['SNKIT_PROGRESS'] in ('1', 'TRUE'):
@@ -1448,7 +1446,7 @@ def simplified_network(df,drop_hanging_nodes_run=True,fill_attributes_run=True):
     net = add_travel_time(net)   
     return net   
 
-def ferry_connected_network(country,data_path):
+def ferry_connected_network(country,data_path,tqdm_on=True):
     """
     connect ferries to main network (and connect smaller sub networks automatically)
 
@@ -1459,6 +1457,9 @@ def ferry_connected_network(country,data_path):
     Returns:
         [type]: [description]
     """
+    if not tqdm_on:
+        from utils import tqdm_standin as tqdm
+
     # load full network
     full_network = roads(str(data_path.joinpath('country_osm','{}.osm.pbf'.format(country))))
     main_road_network = full_network.loc[full_network.highway.isin(road_types)].reset_index(drop=True)
@@ -1685,7 +1686,7 @@ def connect_ferries(country,full_network,ferry_network):
 
         # collect paths on one side  of the ferry, as other side does not have a network nearby
         else:
-            start_node = ferry_nodes_graph[0]
+            start_node = ferry_nodes_graph[0] 
             start_coords = ferry_nodes.geometry[ferry_nodes.id=={v: k for k, v in nearest_node_ferry.items()}[sg.vs[start_node]['name']]].values
 
             # collect all shortest path from one side of the ferry to main network nodes
