@@ -269,6 +269,7 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
 
     Returns:
         result_df [pandas.DataFrame]: The results! 'frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'    """    
+    
     result_df = []
     g = graph_load(edges)
     #These if statements allow for an OD and population list to be randomly generated
@@ -290,7 +291,6 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     OD_thresh = OD_orig * 10
     
     demand = create_demand(OD_nodes, OD_orig, node_pop)
-
     exp_g = g.copy()
     trips_possible = True
     pos_trip_no = (((OD_node_no**2) - OD_node_no) / 2) - ((np.count_nonzero(np.isinf(OD_orig)))/2)
@@ -298,6 +298,11 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
     frac_counter = 0 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
+
+    # add frac 0.00 for better figures and results
+    result_df.append((0.00, 0, 100, 0, 0.0, 0, 0.0, 0, 0.0, 0.0, 0.0, 
+                    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 
+                    [0.0,0.0, 0.0, 0.0, 0.0, 0.0]))
 
     while trips_possible:
         if frac_counter > 0.3 and frac_counter <= 0.5: del_frac = 0.02
@@ -311,21 +316,29 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
             print("random sample playing up but its ok")
             edges_del = range(exp_edge_no)
         exp_g.delete_edges(edges_del)
+
         frac_counter += del_frac
+        
         cur_dis_length = 1 - (np.sum(exp_g.es['distance'])/tot_edge_length)
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
         new_shortest_paths = exp_g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
         perc_matrix = np.matrix(new_shortest_paths)
         perc_matrix[perc_matrix == inf] = 99999999999
+        perc_matrix[perc_matrix == 0] = np.nan
+
+        #if ((perc_matrix[perc_matrix != 99999999999]).shape[1]==len(OD_nodes)):
+        #    break
+
         results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3),cur_dis_length,cur_dis_time)  
         result_df.append(results)
-        
+
         #If the frac_counter goes past 0.99
         if results[0] >= 0.99: break
         #If there are no edges left to remove
         if exp_edge_no < 1: break
+
     #'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','pct_thirty_plus_over2', 'pct_thirty_plus_over6', 'pct_twice_plus_over1'
-    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated', 
+    result_df = pd.DataFrame(result_df, columns=['frac_counter', 'pct_isolated','pct_unaffected', 'pct_delayed',
                                                 'average_time_disruption','total_surp_loss_e1', 
                                                 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2',
                                                 'distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles'])
@@ -348,79 +361,80 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     Returns:
         frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
     """
+    #masked travel times (OD is the percolation matrix)
     masked_OD = np.ma.masked_greater(OD, value = (fail_value - 1))
+
+    #masked baseline shortest paths (but doesnt change now, as there is no fail_value in there)
     masked_baseline = np.ma.masked_greater(baseline, value = (fail_value - 1))
-    adj_time = np.ma.masked_array(OD,masked_baseline.mask)
-    masked_demand = np.ma.masked_array(demand, masked_baseline.mask)
 
-    total_trips = masked_demand.sum()
+    #masked adjusted time
+    #adj_time = np.ma.masked_array(OD,masked_baseline.mask)
+    adj_time = OD-baseline
+    #masked demand matrix
+    masked_demand = np.ma.masked_array(demand, masked_OD.mask)
 
-    isolated_trips = np.ma.masked_array(masked_demand,~masked_OD.mask)
-    isolated_trips_sum = isolated_trips.sum()
+    total_trips = (baseline.shape[0]*baseline.shape[1])-baseline.shape[0]
+
+    #isolated_trips = np.ma.masked_array(masked_demand,~masked_OD.mask)
+    isolated_trips_sum = OD[OD == fail_value].shape[1]
+
+    # get percentage of isolated trips
+    pct_isolated = (isolated_trips_sum / total_trips)*100
 
     potentially_disrupted_trips = np.ma.masked_array(masked_demand,masked_OD.mask)
     potentially_disrupted_trips_sum = potentially_disrupted_trips.sum()
     
-    unaffected_trips = np.ma.masked_equal(masked_OD,masked_baseline).compressed()
+    ## get travel times for remaining trips
+    #unaffected_trips = np.ma.masked_equal(masked_OD,masked_baseline).compressed()
+    #print(OD[OD == baseline])
+    time_unaffected_trips = OD[OD == baseline]
 
-    try:
+    if not (np.isnan(np.array(time_unaffected_trips)).all()):
         unaffected_percentiles = []
-        unaffected_percentiles.append(np.percentile(unaffected_trips,10))
-        unaffected_percentiles.append(np.percentile(unaffected_trips,25))
-        unaffected_percentiles.append(np.percentile(unaffected_trips,50))
-        unaffected_percentiles.append(np.percentile(unaffected_trips,75))
-        unaffected_percentiles.append(np.percentile(unaffected_trips,90))
-        unaffected_percentiles.append(np.mean(unaffected_trips))
-    except:
-        unaffected_percentiles = []
-
-    try:
-        pct_isolated = (isolated_trips_sum / total_trips)
-    except:
-        pct_isolated  = 0
+        unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),10))
+        unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),25))
+        unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),50))
+        unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),75))
+        unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),90))
+        unaffected_percentiles.append(np.nanmean((time_unaffected_trips)))
+    else:
+        unaffected_percentiles = [np.nan,np.nan,np.nan,np.nan,np.nan,np.nan]
+    #print(unaffected_percentiles)
 
     ## Set up for ratio-based calculations
 
     fail_ratio = 50.0 #((fail_value-1) / baseline.max()) # headlimit above which trip destroyed
 
-    potentially_disrupted_trips_original_time = np.ma.masked_array(masked_baseline, masked_OD.mask)
-    delta_time_OD = (masked_OD - potentially_disrupted_trips_original_time)
-    average_time_disruption = (delta_time_OD * potentially_disrupted_trips).sum() / potentially_disrupted_trips.sum()
-    delayed_trips = delta_time_OD[delta_time_OD !=0].compressed()
+    #potentially_disrupted_trips_original_time = np.ma.masked_array(masked_baseline, masked_OD.mask)
+    #delta_time_OD = (masked_OD - potentially_disrupted_trips_original_time)
+    #average_time_disruption = (delta_time_OD * potentially_disrupted_trips).sum() / potentially_disrupted_trips.sum()
+    #delayed_trips = delta_time_OD[delta_time_OD !=0].compressed()
 
-    try:
+    delayed_trips_time = adj_time[(OD != baseline) & (np.nan_to_num(np.array(OD),nan=fail_value) != fail_value)]
+    #print(np.nan_to_num(np.array(OD),nan=fail_value) 
+    #print(np.array(unaffected_trips).shape[1],np.array(delayed_trips).shape[1])
+
+    unaffected_trips = np.array(time_unaffected_trips).shape[1]
+    delayed_trips = np.array(delayed_trips_time).shape[1]
+
+    pct_unaffected = (unaffected_trips/total_trips)*100
+    pct_delayed = (delayed_trips/total_trips)*100
+
+    if not (np.isnan(np.array(delayed_trips_time)).all()):
+
         delayed_percentiles = []
-        delayed_percentiles.append(np.percentile(delayed_trips,10))
-        delayed_percentiles.append(np.percentile(delayed_trips,25))
-        delayed_percentiles.append(np.percentile(delayed_trips,50))
-        delayed_percentiles.append(np.percentile(delayed_trips,75))
-        delayed_percentiles.append(np.percentile(delayed_trips,90))
-        delayed_percentiles.append(np.mean(delayed_trips))
-    except:
-        delayed_percentiles = []
-
-    frac_OD = masked_OD / potentially_disrupted_trips_original_time
-
-    # def PctDisrupt(x, frac_OD, demand):
-    #     masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
-    #     m_demand = np.ma.masked_array(demand, masked_frac_OD.mask)
-    #     return ((m_demand.sum()) / (demand.sum()))
-
-    # def PctDisrupt_with_N(x, frac_OD, demand, n):
-    #     journeys_over_n = np.ma.masked_greater(baseline, n)
-    #     masked_frac_OD = np.ma.masked_inside(frac_OD, 1, (1+x))
-    #     disrupt_and_over = np.logical_and(journeys_over_n.mask,masked_frac_OD.mask)
-    #     m_demand = np.ma.masked_array(demand, disrupt_and_over)
-    #     return ((m_demand.sum()) / (demand.sum()))
-
-    # pct_thirty_plus = PctDisrupt(0.3, frac_OD, potentially_disrupted_trips)
-    # pct_twice_plus = PctDisrupt(1, frac_OD, potentially_disrupted_trips)
-    # pct_thrice_plus = PctDisrupt(2, frac_OD, potentially_disrupted_trips)
-
-    # pct_twice_plus_over1 = PctDisrupt_with_N(1, frac_OD, potentially_disrupted_trips,1)
-    # pct_thirty_plus_over2 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,2)
-    # pct_thirty_plus_over6 = PctDisrupt_with_N(0.3, frac_OD, potentially_disrupted_trips,6)
-  
+        delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),10))
+        delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),25))
+        delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),50))
+        delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),75))
+        delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),90))
+        delayed_percentiles.append(np.nanmean(np.array(delayed_trips_time)))
+        average_time_disruption = np.nanmean(np.array(delayed_trips_time))
+        #print(delayed_percentiles)
+    else:
+        delayed_percentiles = [np.nan,np.nan,np.nan,np.nan,np.nan,np.nan]
+        average_time_disruption = np.nan
+ 
     # Flexing demand with trip cost
     def surplus_loss(e, C2, C1, D1):
         """[summary]
@@ -435,15 +449,19 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
             [type]: [description]
         """
         Y_intercept_max_cost = C1 - (e * D1)
-        (np.amax(Y_intercept_max_cost.shape))
+        #print(np.amax(Y_intercept_max_cost))
 
         C2 = np.minimum(C2, Y_intercept_max_cost)
-        
+
         delta_cost = C2 - C1
+
+        #print(np.amin(delta_cost))
 
         delta_demand = (delta_cost / e)
 
         D2 = (D1 + delta_demand)
+
+        #print(np.amin(delta_demand))
 
         surplus_loss_ans = ((delta_cost * D2) + ((delta_cost * -delta_demand) / 2))
 
@@ -453,27 +471,22 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
         total_pct_surplus_loss = total_surp_loss / triangle.sum()
 
-        return total_surp_loss, total_pct_surplus_loss
+        return total_surp_loss, total_pct_surplus_loss*100
 
-    adj_cost = (adj_time * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
+    adj_cost = (OD * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
     baseline_cost = (baseline * GDP_per_capita) / (365 * 8 ) #* 3600) time is in hours, so not sure why we do this multiplications with 3600? and minutes would be times 60?
 
-    total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost.data, baseline_cost, demand)
-    total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost.data, baseline_cost, demand)
+    adj_cost = np.nan_to_num(np.array(adj_cost),nan=np.nanmax(adj_cost))
 
-    if pct_isolated is masked: pct_isolated = np.nan
-    if total_surp_loss_e1 is masked: total_surp_loss_e1 = np.nan
-    if total_pct_surplus_loss_e1 is masked: total_pct_surplus_loss_e1 = np.nan
-    if total_surp_loss_e2 is masked: total_surp_loss_e2 = np.nan
-    if total_pct_surplus_loss_e2 is masked: total_pct_surplus_loss_e2 = np.nan
-    # if pct_thirty_plus is masked: pct_thirty_plus = np.nan
-    # if pct_twice_plus is masked: pct_twice_plus = np.nan
-    # if pct_thrice_plus is masked: pct_thrice_plus = np.nan
-    #pct_thirty_plus, pct_twice_plus, pct_thrice_plus,pct_thirty_plus_over2, pct_thirty_plus_over6, pct_twice_plus_over1 
+    total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, demand)
+    total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, demand)
 
-    return frac_counter, pct_isolated, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
+    #print(pct_unaffected,pct_delayed,pct_isolated,total_pct_surplus_loss_e1,total_pct_surplus_loss_e2)
+    #print(pct_unaffected+pct_delayed+pct_isolated)
 
-def run_percolation_cluster(x,run_no=500):
+    return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
+
+def run_percolation_cluster(x,run_no=100):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -491,9 +504,8 @@ def run_percolation_cluster(x,run_no=500):
     get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(x) & y.name.endswith('-edges.feather'))]
 
     for network in get_all_networks:
+    
         try:
-    #Get GDP for country (world bank values 2019)   
-    #all_gdp = pd.read_csv(open(os.path.join(data_path,"worldbank_gdp_2019.csv")),error_bad_lines=False)
             country = x
 
             if data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)).is_file():
@@ -668,20 +680,21 @@ def get_metrics_and_split(x):
 
 if __name__ == '__main__':     
 
-    data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
-    #data_path = Path(r'C:/data/')
+    #data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
+    data_path = Path(r'C:/data/')
 
-    #countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM', 'ASM', 'ATG', 'AUS', 'AUT', 'AZE', 'BDI', 'BEL', 'BEN', 'BES', 'BFA', 'BGD', 'BGR', 'BHR', 'BHS', 'BIH', 'BLM', 'BLR', 'BLZ', 'BMU', 'BOL', 'BRA', 'BRB', 'BRN', 'BTN', 'BWA', 'CAF', 'CAN', 'CCK', 'CHE', 'CHL', 'CIV', 'CMR', 'COD', 'COG', 'COK', 'COL', 'COM', 'CPV', 'CRI', 'CUB', 'CUW', 'CXR', 'CYM', 'CYP', 'CZE', 'DJI', 'DMA', 'DNK', 'DOM', 'DZA', 'ECU', 'EGY', 'ERI', 'ESH', 'ESP', 'EST', 'ETH', 'FIN', 'FJI', 'FLK', 'FRA', 'FRO', 'FSM', 'GAB', 'GBR', 'GEO', 'GGY', 'GHA', 'GIB', 'GIN', 'GLP', 'GMB', 'GNB', 'GNQ', 'GRC', 'GRD', 'GRL', 'GTM', 'GUF', 'GUM', 'GUY', 'HKG', 'HND', 'HRV', 'HTI', 'HUN', 'IDN', 'IMN', 'IND', 'IRL', 'IRN', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JEY', 'JOR', 'JPN', 'KAZ', 'KEN', 'KGZ', 'KHM', 'KIR', 'KNA', 'KOR', 'KWT', 'LAO', 'LBN', 'LBR', 'LBY', 'LCA', 'LIE', 'LKA', 'LSO', 'LTU', 'LUX', 'LVA', 'MAC', 'MAF', 'MAR', 'MCO', 'MDA', 'MDG', 'MDV', 'MEX', 'MHL', 'MKD', 'MLI', 'MLT', 'MMR', 'MNE', 'MNG', 'MNP', 'MOZ', 'MRT', 'MSR', 'MTQ', 'MUS', 'MWI', 'MYS', 'MYT', 'NAM', 'NCL', 'NER', 'NFK', 'NGA', 'NIC', 'NIU', 'NLD', 'NOR', 'NPL', 'NRU', 'NZL', 'OMN', 'PAK', 'PAN', 'PER', 'PHL', 'PLW', 'PNG', 'POL', 'PRI', 'PRK', 'PRT', 'PRY', 'PSE', 'PYF', 'QAT', 'REU', 'ROU', 'RWA', 'SAU', 'SDN', 'SEN', 'SGP', 'SHN', 'SLB', 'SLE', 'SLV', 'SMR', 'SOM', 'SPM', 'SRB', 'SSD', 'STP', 'SUR', 'SVK', 'SVN', 'SWE', 'SWZ', 'SXM', 'SYC', 'SYR', 'TCA', 'TCD', 'TGO', 'THA', 'TJK', 'TKM', 'TLS', 'TON', 'TTO', 'TUN', 'TUR', 'TUV', 'TWN', 'TZA', 'UGA', 'UKR', 'URY', 'UZB', 'VAT', 'VCT', 'VEN', 'VGB', 'VIR', 'VNM', 'VUT', 'WLF', 'WSM', 'XAD', 'XCA', 'XKO', 'XNC', 'YEM', 'ZAF', 'ZMB', 'ZWE']
     #countries is without CHN, DEU, RUS, USA
     countries = [y.name[:3] for y in data_path.joinpath('road_networks').iterdir()]
-    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_metrics').iterdir()]
+    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results').iterdir()]
     left_countries = list(set(countries)-set(fin_countries))
     left_countries = [x[:3] for x in left_countries]
     from random import shuffle
-    #shuffle(left_countries)
-    #left_countries = ['BRB', 'BTN', 'KNA', 'GUY', 'NFK', 'BLZ', 'WLF', 'SHN', 'WSM', 'KIR', 'MCO', 'VUT', 'TUV', 'XAD','ASM','FSM','MHL','PLW','VGB','MDV','SLB','VCT']\
-    left_countries=['GRL']
-    print(left_countries)
+    shuffle(left_countries)
+    #left_countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND']
+    #left_countries=['ABW']
+    #print(left_countries)
 
-    with Pool(10) as pool: 
+    #run_percolation_cluster('ALB')
+
+    with Pool(cpu_count()-1) as pool: 
         pool.map(run_percolation_cluster,left_countries,chunksize=1)   
