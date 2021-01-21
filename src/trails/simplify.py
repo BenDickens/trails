@@ -1736,7 +1736,6 @@ def connect_ferries(country,full_network,ferry_network):
     
     return pd.DataFrame(collect_connectors,columns=['geometry'])
 
-
 # def add_modal(network,alter_transport,threshold=0.02):
 #     """
 #     Designed with the addition of ferries in mind, to snap eligible routes onto existing network

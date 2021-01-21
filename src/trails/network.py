@@ -9,18 +9,24 @@ import matplotlib.pyplot as plt
 import feather
 import pandas as pd
 import pygeos as pyg
+import logging
+from codetiming import Timer
 
 from timeit import default_timer as timer
+
 from tqdm import tqdm
 from pathlib import Path
 from plotly.graph_objs import *
-
+import traceback
 from numpy import inf
 
 #from pgpkg import Geopackage
 from numpy.ma import masked
 
 data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
+
+code_timer = Timer("time_code", text="Time spent: {:.2f}")
+
 
 from pathos.multiprocessing import Pool,cpu_count
 from itertools import repeat
@@ -72,13 +78,16 @@ def graph_load(edges):
         igraph.Graph (object) : a graph with distance and time attributes
     """    
     #return ig.Graph.TupleList(gdfNet.edges[['from_id','to_id','distance']].itertuples(index=False),edge_attrs=['distance'])
-    graph = ig.Graph(directed=False)
-    max_node_id = max(max(edges.from_id),max(edges.to_id))
-    graph.add_vertices(max_node_id+1)
-    edge_tuples = zip(edges.from_id,edges.to_id)
-    graph.add_edges(edge_tuples)
-    graph.es['distance'] = edges.distance
-    graph.es['time'] = edges.time
+    edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
+    graph = ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
+    graph.vs['id'] = graph.vs['name']
+    # graph = ig.Graph(directed=False)
+    # max_node_id = max(max(edges.from_id),max(edges.to_id))
+    # graph.add_vertices(max_node_id+1)
+    # edge_tuples = zip(edges.from_id,edges.to_id)
+    # graph.add_edges(edge_tuples)
+    # graph.es['distance'] = edges.distance
+    # graph.es['time'] = edges.time
     return graph
     
 def graph_load_largest(edges):
@@ -286,7 +295,9 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
          node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
+    #with code_timer:
     base_shortest_paths = g.shortest_paths_dijkstra(source=OD_nodes,target = OD_nodes,weights='time')
+    #print('Baseline shortest path finished')
     OD_orig = np.matrix(base_shortest_paths)
     OD_thresh = OD_orig * 10
     
@@ -309,11 +320,11 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
         if frac_counter > 0.5: del_frac = 0.05
         exp_edge_no = exp_g.ecount()
         #The number of edges to delete
-        no_edge_del = math.floor(del_frac * edge_no)
+        no_edge_del = max(1,math.floor(del_frac * edge_no))
         try:
             edges_del = random.sample(range(exp_edge_no),no_edge_del)
         except:
-            print("random sample playing up but its ok")
+            #print("random sample playing up but its ok")
             edges_del = range(exp_edge_no)
         exp_g.delete_edges(edges_del)
 
@@ -328,8 +339,10 @@ def percolation_Final(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_cap
 
         #if ((perc_matrix[perc_matrix != 99999999999]).shape[1]==len(OD_nodes)):
         #    break
-
-        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3),cur_dis_length,cur_dis_time)  
+        #with code_timer:
+        results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,round(frac_counter,3),cur_dis_length,cur_dis_time) 
+        #print('Results finished')
+         
         result_df.append(results)
 
         #If the frac_counter goes past 0.99
@@ -361,18 +374,10 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     Returns:
         frac_counter, pct_isolated, average_time_disruption, pct_thirty_plus, pct_twice_plus, pct_thrice_plus,total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2
     """
-    #masked travel times (OD is the percolation matrix)
-    masked_OD = np.ma.masked_greater(OD, value = (fail_value - 1))
-
-    #masked baseline shortest paths (but doesnt change now, as there is no fail_value in there)
-    masked_baseline = np.ma.masked_greater(baseline, value = (fail_value - 1))
-
-    #masked adjusted time
-    #adj_time = np.ma.masked_array(OD,masked_baseline.mask)
+    #adjusted time
     adj_time = OD-baseline
-    #masked demand matrix
-    masked_demand = np.ma.masked_array(demand, masked_OD.mask)
 
+    # total trips
     total_trips = (baseline.shape[0]*baseline.shape[1])-baseline.shape[0]
 
     #isolated_trips = np.ma.masked_array(masked_demand,~masked_OD.mask)
@@ -381,14 +386,10 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     # get percentage of isolated trips
     pct_isolated = (isolated_trips_sum / total_trips)*100
 
-    potentially_disrupted_trips = np.ma.masked_array(masked_demand,masked_OD.mask)
-    potentially_disrupted_trips_sum = potentially_disrupted_trips.sum()
-    
     ## get travel times for remaining trips
-    #unaffected_trips = np.ma.masked_equal(masked_OD,masked_baseline).compressed()
-    #print(OD[OD == baseline])
     time_unaffected_trips = OD[OD == baseline]
 
+    # get unaffected trips travel times
     if not (np.isnan(np.array(time_unaffected_trips)).all()):
         unaffected_percentiles = []
         unaffected_percentiles.append(np.nanpercentile(np.array(time_unaffected_trips),10))
@@ -399,27 +400,18 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
         unaffected_percentiles.append(np.nanmean((time_unaffected_trips)))
     else:
         unaffected_percentiles = [np.nan,np.nan,np.nan,np.nan,np.nan,np.nan]
-    #print(unaffected_percentiles)
 
-    ## Set up for ratio-based calculations
-
-    fail_ratio = 50.0 #((fail_value-1) / baseline.max()) # headlimit above which trip destroyed
-
-    #potentially_disrupted_trips_original_time = np.ma.masked_array(masked_baseline, masked_OD.mask)
-    #delta_time_OD = (masked_OD - potentially_disrupted_trips_original_time)
-    #average_time_disruption = (delta_time_OD * potentially_disrupted_trips).sum() / potentially_disrupted_trips.sum()
-    #delayed_trips = delta_time_OD[delta_time_OD !=0].compressed()
-
+    # save delayed trips travel times
     delayed_trips_time = adj_time[(OD != baseline) & (np.nan_to_num(np.array(OD),nan=fail_value) != fail_value)]
-    #print(np.nan_to_num(np.array(OD),nan=fail_value) 
-    #print(np.array(unaffected_trips).shape[1],np.array(delayed_trips).shape[1])
 
     unaffected_trips = np.array(time_unaffected_trips).shape[1]
     delayed_trips = np.array(delayed_trips_time).shape[1]
 
+    # save percentage unaffected and delayed
     pct_unaffected = (unaffected_trips/total_trips)*100
     pct_delayed = (delayed_trips/total_trips)*100
 
+    # get delayed trips travel times
     if not (np.isnan(np.array(delayed_trips_time)).all()):
 
         delayed_percentiles = []
@@ -430,7 +422,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
         delayed_percentiles.append(np.nanpercentile(np.array(delayed_trips_time),90))
         delayed_percentiles.append(np.nanmean(np.array(delayed_trips_time)))
         average_time_disruption = np.nanmean(np.array(delayed_trips_time))
-        #print(delayed_percentiles)
     else:
         delayed_percentiles = [np.nan,np.nan,np.nan,np.nan,np.nan,np.nan]
         average_time_disruption = np.nan
@@ -481,12 +472,9 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, demand)
 
-    #print(pct_unaffected,pct_delayed,pct_isolated,total_pct_surplus_loss_e1,total_pct_surplus_loss_e2)
-    #print(pct_unaffected+pct_delayed+pct_isolated)
-
     return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
-def run_percolation_cluster(x,run_no=100):
+def run_percolation_cluster(x,run_no=200):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -497,8 +485,8 @@ def run_percolation_cluster(x,run_no=100):
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
 
-    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
-    data_path = Path(r'C:/data/')
+    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'C:/data/')
 
     #get all networks for a country
     get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(x) & y.name.endswith('-edges.feather'))]
@@ -535,6 +523,7 @@ def run_percolation_cluster(x,run_no=100):
             OD_pos = prepare_possible_OD(possibleOD, nodes, h)
             OD_no = min(len(OD_pos),100)
             results = []
+
             for x in tqdm(range(run_no),total=run_no,desc='percolation for '+country+' '+network):
                 OD_nodes, populations = choose_OD(OD_pos, OD_no)
                 results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
@@ -544,7 +533,8 @@ def run_percolation_cluster(x,run_no=100):
 
         except Exception as e: 
             print(country+' '+network+" failed because of {}".format(e))
-
+            print(traceback.format_exc())
+            
 def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
@@ -575,6 +565,7 @@ def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
         np.random.seed(seed)
 
     OD_pos = prepare_possible_OD(possibleOD, nodes)
+
     results = []
     for x in tqdm(range(run_no),total=run_no,desc='percolation'):
         OD_nodes, populations = choose_OD(OD_pos, OD_no)
@@ -620,14 +611,14 @@ def reset_ids(edges, nodes):
 def get_metrics_and_split(x):
     
     try:
-        #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
-        data_path = Path(r'C:/data/')
+        data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+        #data_path = Path(r'C:/data/')
 
         print(x+' has started!')
         edges = feather.read_dataframe(data_path.joinpath("road_networks","{}-edges.feather".format(x)))
         nodes = feather.read_dataframe(data_path.joinpath("road_networks","{}-nodes.feather".format(x)))
  
-        edges = edges.drop('geometry',axis=1)
+        #edges = edges.drop('geometry',axis=1)
         edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
         graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
         graph.vs['id'] = graph.vs['name']
@@ -680,21 +671,17 @@ def get_metrics_and_split(x):
 
 if __name__ == '__main__':     
 
-    #data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
-    data_path = Path(r'C:/data/')
+    data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
+    #data_path = Path(r'C:/data/')
 
-    #countries is without CHN, DEU, RUS, USA
-    countries = [y.name[:3] for y in data_path.joinpath('road_networks').iterdir()]
-    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results').iterdir()]
-    left_countries = list(set(countries)-set(fin_countries))
-    left_countries = [x[:3] for x in left_countries]
-    from random import shuffle
-    shuffle(left_countries)
-    #left_countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND']
-    #left_countries=['ABW']
-    #print(left_countries)
+    # countries = [y.name[:3] for y in data_path.joinpath('road_networks').iterdir()]   
+    # fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results').iterdir()]
+    # left_countries = list(set(countries)-set(fin_countries))
+    # left_countries = [x[:3] for x in left_countries]
 
-    #run_percolation_cluster('ALB')
+    all_files = [ files for files in data_path.joinpath('road_networks').iterdir() ]
+    sorted_files = sorted(all_files, key = os.path.getsize) 
+    countries = [y.name[:3] for y in sorted_files]   
 
     with Pool(cpu_count()-1) as pool: 
-        pool.map(run_percolation_cluster,left_countries,chunksize=1)   
+        pool.map(run_percolation_cluster,countries,chunksize=1)   
