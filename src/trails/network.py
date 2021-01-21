@@ -27,7 +27,7 @@ data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
 
 code_timer = Timer("time_code", text="Time spent: {:.2f}")
 
-
+import parmap
 from pathos.multiprocessing import Pool,cpu_count
 from itertools import repeat
 
@@ -474,7 +474,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
-def run_percolation_cluster(x,run_no=200):
+def run_percolation(x,run_no=200):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -527,7 +527,8 @@ def run_percolation_cluster(x,run_no=200):
             for x in tqdm(range(run_no),total=run_no,desc='percolation for '+country+' '+network):
                 OD_nodes, populations = choose_OD(OD_pos, OD_no)
                 results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
-            
+
+
             res = pd.concat(results)
             res.to_csv(data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)))
 
@@ -535,43 +536,80 @@ def run_percolation_cluster(x,run_no=200):
             print(country+' '+network+" failed because of {}".format(e))
             print(traceback.format_exc())
             
-def run_percolation(country, edges, nodes, OD_no = 100, run_no = 1, seed = []):
+def run_percolation_parallel(x,run_no=200):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
     Args:
-        country (String): ISO 3 code for country
-        edges, nodes (pandas.DataFrame) :  dataframes with the edges and nodes of country
-        OD_no (int) :  number of OD pairs to use
-        run_no (int) : number of runs
-        seed (int) : 
-        nodes (pandas.DataFrame): nodes to re-reference ids
+        x : country string
 
     Returns:
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
-    #Get GDP for country (world bank values 2019)   
-    all_gdp = pd.read_csv(open("worldbank_gdp_2019.csv"),error_bad_lines=False)
-    gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-    # Each country has a set of centroids of grid cells with populations for each cell
-    all_OD = pd.read_csv(open("od_points_per_country.csv"))
-    possibleOD = all_OD.loc[all_OD.GID_0 == country].reset_index(drop=True)
-    del possibleOD['Unnamed: 0']
-    del possibleOD['GID_0']
-    possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.Geometry)
 
-    if seed:
-        random.seed(seed)
-        np.random.seed(seed)
+    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'C:/data/')
 
-    OD_pos = prepare_possible_OD(possibleOD, nodes)
+    #get all networks for a country
+    get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(x) & y.name.endswith('-edges.feather'))]
 
-    results = []
-    for x in tqdm(range(run_no),total=run_no,desc='percolation'):
-        OD_nodes, populations = choose_OD(OD_pos, OD_no)
-        results.append(percolation_Final(edges, 0.01, OD_nodes, populations,gdp))
+    for network in get_all_networks:
     
-    return pd.concat(results)
+        try:
+            country = x
+
+            if data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)).is_file():
+                print(country+' '+network+" already finished!")           
+                continue
+            
+            print(country+' '+network+" started!")
+            all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
+            gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+            edges = feather.read_dataframe(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
+            nodes = feather.read_dataframe(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
+            nodes.geometry = pyg.from_wkb(nodes.geometry)
+
+            # Each country has a set of centroids of grid cells with populations for each cell
+            possibleOD = pd.read_csv(open(data_path.joinpath("country_OD_points","{}.csv".format(x))))
+            grid_height = possibleOD.grid_height.iloc[2]
+            #radius of circle to cover entire box,  pythagorus theorem
+            h = np.sqrt(((grid_height)**2) *2)
+            del possibleOD['Unnamed: 0']
+            del possibleOD['GID_0']
+            possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
+
+            seed = sum(map(ord,country))
+            random.seed(seed)
+            np.random.seed(seed)
+
+            OD_pos = prepare_possible_OD(possibleOD, nodes, h)
+            OD_no = min(len(OD_pos),100)
+            results = []
+
+            edges_list = []
+            del_fracs = []
+            OD_nodes_list = []
+            populations_list = []
+            gdp_list = []
+
+            for x in range(run_no):
+                OD_nodes, populations = choose_OD(OD_pos, OD_no)
+                edges_list.append(edges)
+                del_fracs.append(0.01)
+                OD_nodes_list.append(OD_nodes)
+                populations_list.append(populations)
+                gdp_list.append(gdp)
+
+            with Pool(cpu_count()-1) as pool: 
+                results = pool.starmap(percolation_Final,zip(edges_list,del_fracs,OD_nodes_list,populations_list,gdp_list),chunksize=1)   
+
+            res = pd.concat(results)
+            res.to_csv(data_path.joinpath('percolation_results','{}_{}_results.csv'.format(country,network)))
+
+        except Exception as e: 
+            print(country+' '+network+" failed because of {}".format(e))
+            print(traceback.format_exc())
+
 
 def reset_ids(edges, nodes):
     """Resets the ids of the nodes and edges, editing 
@@ -683,5 +721,6 @@ if __name__ == '__main__':
     sorted_files = sorted(all_files, key = os.path.getsize) 
     countries = [y.name[:3] for y in sorted_files]   
 
-    with Pool(cpu_count()-1) as pool: 
-        pool.map(run_percolation_cluster,countries,chunksize=1)   
+    run_percolation_parallel('ABW')
+    #with Pool(cpu_count()-1) as pool: 
+    #    pool.map(run_percolation_cluster,countries,chunksize=1)   
