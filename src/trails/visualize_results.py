@@ -11,7 +11,7 @@ import traceback
 import seaborn as sns
 from matplotlib.ticker import MaxNLocator
 
-def main():
+def plot_percolation_full():
 
     # set data paths to results
     data_path_perc = r'C:\Data\percolation_results'
@@ -176,6 +176,7 @@ def main():
             save_failed.append(net_name)
         
     print(save_failed)
+    
 if __name__ == '__main__':       
-    main()
+    plot_percolation_full()
     
