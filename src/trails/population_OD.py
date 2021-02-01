@@ -55,7 +55,7 @@ def create_grid(bbox,height):
         y_top = y_top_origin
         y_bottom = y_bottom_origin
         for countrows in range(rows):
-            res_geoms.append(pygeos.polygons(
+            res_geoms.append((
                 ((x_left_origin, y_top), (x_right_origin, y_top),
                 (x_right_origin, y_bottom), (x_left_origin, y_bottom)
                 )))
@@ -64,7 +64,7 @@ def create_grid(bbox,height):
         x_left_origin = x_left_origin + height
         x_right_origin = x_right_origin + height
 
-    return res_geoms
+    return pygeos.polygons(res_geoms)
 
 def create_country_OD_points(country):
     """Create a list of OD points for the specified country 
